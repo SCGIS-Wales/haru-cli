@@ -28,6 +28,8 @@ uv sync
 
 | Command                          | Purpose                                                       |
 | -------------------------------- | ------------------------------------------------------------- |
+| `haru doctor`                    | Diagnose config, sign-in, and Bedrock permissions              |
+| `haru doctor --all-roles`        | Find which account+role can actually reach Bedrock            |
 | `haru config init`               | Create a starter configuration (interactive)                  |
 | `haru config show`               | Show the resolved configuration (no secrets)                  |
 | `haru login`                     | Browser sign-in to IAM Identity Center (OAuth 2.0 + PKCE)     |
@@ -40,7 +42,9 @@ uv sync
 | `haru --version`                 | Print the installed version                                   |
 
 Configuration is resolved from `--config`, then `$HARU_CONFIG`, then
-`./config/haru.yaml`, then `~/.config/haru/haru.yaml`.
+`./config/haru.yaml`, then `~/.config/haru/haru.yaml`. `haru --debug <command>`
+turns on verbose logging, including the AWS API operations and error codes
+behind a failure (never request bodies or credentials).
 
 Inside `haru chat`, slash commands switch targets mid-session:
 
@@ -118,6 +122,27 @@ Declarative YAML under `config/` — models, agents, orchestration
 (supervisor/swarm/graph), MCP servers, guardrails, sessions, sampling,
 logging, and OpenTelemetry. No secrets in YAML: values reference environment
 variables with `${env:VAR}`. See [docs/configuration.md](docs/configuration.md).
+
+## Troubleshooting
+
+If `haru login` succeeds but `haru chat` fails, the role you signed in with
+almost certainly lacks Bedrock permissions. Signing in and being allowed to
+call Bedrock are separate things: haru assumes a role in **your** AWS account
+and calls Bedrock there, so that role needs `bedrock:InvokeModel` and
+`bedrock:InvokeModelWithResponseStream`.
+
+Kiro and Amazon Q working is not evidence that haru will — they send your SSO
+token to the managed Amazon Q service and never call Bedrock in your account,
+so there is no Kiro role to copy.
+
+```bash
+haru doctor              # what is configured, signed in, and permitted
+haru doctor --all-roles  # which of your assigned roles can reach Bedrock
+haru doctor --invoke     # definitive check (makes one billable call)
+```
+
+See [docs/troubleshooting.md](docs/troubleshooting.md) for the IAM policy to
+hand your AWS administrator.
 
 ## Development
 

@@ -136,7 +136,7 @@ def select_identity(  # noqa: PLR0913 - keyword-only wiring points, all optional
         sso_client = boto3.Session().client("sso", region_name=sso_cfg.sso_region)
     warn = notify if notify is not None else _ignore_warning
 
-    accounts = _list_accounts(sso_client, token.access_token)
+    accounts = list_accounts(sso_client, token.access_token)
     pinned_account, pin_source = _pinned_account(sso_cfg)
     account_source = SOURCE_SELECTED
     chosen = next((account for account in accounts if account["accountId"] == pinned_account), None)
@@ -157,7 +157,7 @@ def select_identity(  # noqa: PLR0913 - keyword-only wiring points, all optional
     account_id: str = chosen["accountId"]
     account_name: str | None = chosen.get("accountName")
 
-    roles = _list_roles(sso_client, token.access_token, account_id)
+    roles = list_roles(sso_client, token.access_token, account_id)
     role_source = SOURCE_SELECTED
     if sso_cfg.role_name is not None and sso_cfg.role_name in roles:
         role_name = sso_cfg.role_name
@@ -195,7 +195,7 @@ def _pinned_account(sso_cfg: SsoConfig) -> tuple[str | None, str]:
     return None, ""
 
 
-def _list_accounts(sso_client: Any, access_token: str) -> list[dict[str, Any]]:
+def list_accounts(sso_client: Any, access_token: str) -> list[dict[str, Any]]:
     from botocore.exceptions import ClientError
 
     try:
@@ -212,7 +212,7 @@ def _list_accounts(sso_client: Any, access_token: str) -> list[dict[str, Any]]:
     return sorted(accounts, key=lambda account: str(account["accountId"]))
 
 
-def _list_roles(sso_client: Any, access_token: str, account_id: str) -> list[str]:
+def list_roles(sso_client: Any, access_token: str, account_id: str) -> list[str]:
     from botocore.exceptions import ClientError
 
     try:

@@ -7,7 +7,11 @@ from rich.console import Console
 
 from haru.agents.factory import build_agent
 from haru.auth.session import build_boto3_session
-from haru.commands.streaming import collect_response, surface_guardrail
+from haru.commands.streaming import (
+    build_bedrock_context,
+    collect_response,
+    surface_guardrail,
+)
 from haru.config import load_config, resolve_config_path
 from haru.config.schema import HaruConfig, SamplingConfig
 from haru.errors import HaruError
@@ -40,7 +44,9 @@ def run_prompt(  # noqa: PLR0913 - keyword-only wiring points, all optional
             sampling=sampling,
         )
         chunks: list[str] = []
-        result = collect_response(agent, prompt, chunks.append)
+        result = collect_response(
+            agent, prompt, chunks.append, context=build_bedrock_context(config, agent_name)
+        )
     surface_guardrail(result, console if console is not None else Console(stderr=True))
     return "".join(chunks)
 

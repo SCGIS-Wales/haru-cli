@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `haru doctor`: diagnoses configuration, SSO token, identity provenance,
+  role credentials, caller identity, region divergence, Bedrock reachability,
+  inference-profile availability, and guardrail sanity, with per-check
+  remediation and `--json` output. `--invoke` makes one real (billable)
+  Bedrock call for a definitive answer.
+- `haru doctor --all-roles`: probes every account and role you are assigned
+  and prints a matrix of which combinations can actually reach Bedrock -
+  answering "which IAM role do I need?" empirically.
+- Global `--debug` flag and real logging: `logging.yaml` (level/format/file)
+  is now honoured instead of being dead config. AWS SDK logging rises to INFO
+  under `--debug` (operations and error codes, never bodies or headers), and a
+  redaction filter masks credential-shaped values.
+- `docs/troubleshooting.md`: the IAM policy to hand an AWS administrator,
+  including the easily-missed foundation-model ARNs that cross-region
+  inference profiles require, and why a Kiro/Amazon Q role will not work.
+
+### Fixed
+
+- Bedrock failures no longer surface as raw botocore tracebacks. AccessDenied,
+  ResourceNotFound, Validation, Throttling, and expired-credential errors are
+  translated into actionable messages naming the model, region, role, and the
+  exact IAM action required. A denial mid-chat now returns to the prompt
+  instead of ending the session.
+
 ### Fixed
 
 - Stale configuration pins no longer produce a broken sign-in: `haru login`

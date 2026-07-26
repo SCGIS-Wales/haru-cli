@@ -1,0 +1,172 @@
+"""Tests for the ``haru doctor`` command layer."""
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+from click.testing import CliRunner
+
+from haru.cli import cli
+from haru.diagnostics.checks import CheckResult
+from haru.diagnostics.matrix import RoleProbe
+
+CONFIG = """\
+app:
+  name: haru
+auth:
+  sso:
+    start_url: https://example.awsapps.com/start
+    sso_region: us-east-1
+  bedrock_region: us-east-1
+"""
+
+
+def write_config(tmp_path: Path) -> Path:
+    """Write a minimal config and return its path."""
+    path = tmp_path / "haru.yaml"
+    path.write_text(CONFIG, encoding="utf-8")
+    return path
+
+
+def test_reports_checks_and_exits_zero(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """Passing checks print with a summary and exit 0."""
+    mocker.patch(
+        "haru.diagnostics.checks.run_checks",
+        return_value=iter([CheckResult("SSO token", "pass", "Valid for 90 min.")]),
+    )
+
+    result = runner.invoke(cli, ["doctor", "--config", str(write_config(tmp_path))])
+
+    assert result.exit_code == 0, result.output
+    assert "PASS  SSO token" in result.output
+    assert "0 failed" in result.output
+
+
+def test_failure_exits_one_and_points_at_all_roles(
+    runner: CliRunner, tmp_path: Path, mocker: Any
+) -> None:
+    """A failing check exits 1 and suggests the role sweep."""
+    mocker.patch(
+        "haru.diagnostics.checks.run_checks",
+        return_value=iter(
+            [
+                CheckResult(
+                    "Bedrock invoke (live)",
+                    "fail",
+                    "Converse failed.",
+                    remediation="Grant bedrock:InvokeModelWithResponseStream.",
+                    iam_actions=("bedrock:InvokeModelWithResponseStream",),
+                )
+            ]
+        ),
+    )
+
+    result = runner.invoke(cli, ["doctor", "--config", str(write_config(tmp_path))])
+
+    assert result.exit_code == 1
+    assert "FAIL  Bedrock invoke (live)" in result.output
+    assert "bedrock:InvokeModelWithResponseStream" in result.output
+    assert "--all-roles" in result.output
+
+
+def test_warnings_do_not_fail(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """Warnings are reported but keep the exit code at 0."""
+    mocker.patch(
+        "haru.diagnostics.checks.run_checks",
+        return_value=iter([CheckResult("Regions", "warn", "Model region differs.")]),
+    )
+
+    result = runner.invoke(cli, ["doctor", "--config", str(write_config(tmp_path))])
+
+    assert result.exit_code == 0
+    assert "WARN  Regions" in result.output
+    assert "1 warnings" in result.output
+
+
+def test_json_output_is_parseable(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """--json emits machine-readable results for support tickets."""
+    mocker.patch(
+        "haru.diagnostics.checks.run_checks",
+        return_value=iter([CheckResult("SSO token", "pass", "Valid.", iam_actions=("a:b",))]),
+    )
+
+    result = runner.invoke(cli, ["doctor", "--config", str(write_config(tmp_path)), "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload[0]["name"] == "SSO token"
+    assert payload[0]["iam_actions"] == ["a:b"]
+
+
+def test_invoke_flag_is_forwarded(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """--invoke reaches run_checks."""
+    run_checks = mocker.patch("haru.diagnostics.checks.run_checks", return_value=iter([]))
+
+    runner.invoke(cli, ["doctor", "--config", str(write_config(tmp_path)), "--invoke"])
+
+    assert run_checks.call_args.kwargs["invoke"] is True
+
+
+def test_all_roles_matrix_and_verdict(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """--all-roles prints the matrix and names a working combination."""
+    mocker.patch(
+        "haru.diagnostics.matrix.probe_roles",
+        return_value=iter(
+            [
+                RoleProbe("881490127383", "amazonq-prod", "TRPAmazonQUsers", "ok", "denied"),
+                RoleProbe("111122223333", "ml-sandbox", "BedrockDeveloper", "ok", "ok"),
+            ]
+        ),
+    )
+
+    result = runner.invoke(cli, ["doctor", "--config", str(write_config(tmp_path)), "--all-roles"])
+
+    assert result.exit_code == 0, result.output
+    assert "TRPAmazonQUsers" in result.output
+    assert "BedrockDeveloper" in result.output
+    assert "Use account 111122223333, role BedrockDeveloper" in result.output
+
+
+def test_all_roles_no_usable_role(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """When nothing works, the verdict says so and names the missing actions."""
+    mocker.patch(
+        "haru.diagnostics.matrix.probe_roles",
+        return_value=iter([RoleProbe("881490127383", "prod", "TRPAmazonQUsers", "ok", "denied")]),
+    )
+
+    result = runner.invoke(cli, ["doctor", "--config", str(write_config(tmp_path)), "--all-roles"])
+
+    assert "No assigned role could reach Bedrock" in result.output
+    assert "bedrock:InvokeModel" in result.output
+
+
+def test_all_roles_json(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """--all-roles --json emits parseable probe rows."""
+    mocker.patch(
+        "haru.diagnostics.matrix.probe_roles",
+        return_value=iter([RoleProbe("1", "n", "R", "ok", "ok")]),
+    )
+
+    result = runner.invoke(
+        cli, ["doctor", "--config", str(write_config(tmp_path)), "--all-roles", "--json"]
+    )
+
+    payload = json.loads(result.output)
+    assert payload[0]["role_name"] == "R"
+    assert payload[0]["usable"] is True
+
+
+def test_missing_config_is_clean(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No configuration exits cleanly with the init hint, not a traceback."""
+    monkeypatch.delenv("HARU_CONFIG", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["doctor"])
+
+    assert result.exit_code == 1
+    assert "haru config init" in result.output
+    assert "Traceback" not in result.output
