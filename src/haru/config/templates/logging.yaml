@@ -1,0 +1,12 @@
+logging:
+  level: INFO
+  format: json
+  file: null
+observability:
+  otel:
+    # Enable and set an OTLP endpoint (or export OTEL_EXPORTER_OTLP_ENDPOINT)
+    # to ship traces.
+    enabled: false
+    endpoint: null
+    service_name: haru-cli
+    console_export: false

@@ -1,0 +1,24 @@
+app:
+  name: haru
+  default_command: chat
+auth:
+  sso:
+    start_url: __START_URL__
+    sso_region: __SSO_REGION__
+    registration_scopes:
+      - sso:account:access
+    client_name: haru-cli
+    account_id_env: HARU_AWS_ACCOUNT_ID
+    role_name: __ROLE_NAME__
+    callback_port: 0            # 0 selects an ephemeral loopback port
+    browser: true
+  bedrock_region: __BEDROCK_REGION__
+sessions:
+  backend: file
+  storage_dir: ./.haru/sessions
+includes:
+  models: models.yaml
+  agents: agents.yaml
+  mcp: mcp.yaml
+  guardrails: guardrails.yaml
+  logging: logging.yaml

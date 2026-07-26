@@ -2,7 +2,9 @@
 
 import click
 
+from haru.commands.agents import agents
 from haru.commands.chat import chat
+from haru.commands.config import config
 from haru.commands.login import login
 from haru.commands.run import run
 from haru.commands.session import session
@@ -14,7 +16,9 @@ def cli() -> None:
     """haru: a governed CLI for Amazon Bedrock agents."""
 
 
+cli.add_command(agents)
 cli.add_command(chat)
+cli.add_command(config)
 cli.add_command(login)
 cli.add_command(run)
 cli.add_command(session)

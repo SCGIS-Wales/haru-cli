@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from haru.config import HaruConfig, load_config, resolve_env
+from haru.config import HaruConfig, load_config, resolve_config_path, resolve_env
 from haru.errors import ConfigError
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -163,6 +163,56 @@ def test_default_path_used_when_none(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.chdir(tmp_path)
     config = load_config()
     assert config.app.name == "haru"
+
+
+def test_resolve_explicit_path_wins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An explicit path beats the environment variable."""
+    monkeypatch.setenv("HARU_CONFIG", str(tmp_path / "env.yaml"))
+    explicit = tmp_path / "explicit.yaml"
+    assert resolve_config_path(explicit) == explicit
+
+
+def test_resolve_env_var(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """$HARU_CONFIG is used when no explicit path is given."""
+    monkeypatch.setenv("HARU_CONFIG", str(tmp_path / "env.yaml"))
+    assert resolve_config_path(None) == tmp_path / "env.yaml"
+
+
+def test_resolve_project_local_before_user(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """./config/haru.yaml wins over the user-level config."""
+    monkeypatch.delenv("HARU_CONFIG", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    user_file = tmp_path / "xdg" / "haru" / "haru.yaml"
+    user_file.parent.mkdir(parents=True)
+    user_file.write_text(BASE_YAML, encoding="utf-8")
+    project = tmp_path / "project"
+    (project / "config").mkdir(parents=True)
+    (project / "config" / "haru.yaml").write_text(BASE_YAML, encoding="utf-8")
+    monkeypatch.chdir(project)
+
+    assert resolve_config_path(None) == Path("config") / "haru.yaml"
+
+
+def test_resolve_falls_back_to_user_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The user-level config is used when no project-local file exists."""
+    monkeypatch.delenv("HARU_CONFIG", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    user_file = tmp_path / "xdg" / "haru" / "haru.yaml"
+    user_file.parent.mkdir(parents=True)
+    user_file.write_text(BASE_YAML, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    assert resolve_config_path(None) == user_file
+    assert load_config().app.name == "haru"
+
+
+def test_resolve_nothing_found_is_helpful(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no config anywhere, the error points at 'haru config init'."""
+    monkeypatch.delenv("HARU_CONFIG", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ConfigError, match="haru config init"):
+        resolve_config_path(None)
 
 
 def test_missing_config_file(tmp_path: Path) -> None:

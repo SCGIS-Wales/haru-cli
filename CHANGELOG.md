@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `haru config init`: interactive starter configuration under
+  `~/.config/haru` (SSO settings prompted; guardrails explicitly disabled
+  when no id is provided). `haru config show` prints a secret-free summary.
+- Config resolution order: `--config`, `$HARU_CONFIG`, `./config/haru.yaml`,
+  `~/.config/haru/haru.yaml` — installed CLIs work outside a project clone.
+- `haru agents`: list configured agents with model, prompt, tools, and MCP
+  servers.
+- Chat REPL slash commands: `/help`, `/model` (list/switch models), `/agent`
+  (list/switch agents).
+
+### Fixed
+
+- `haru login` reports configuration errors as clean messages instead of a
+  traceback, pointing at `haru config init`.
+
 ## [0.1.0] - 2026-07-26
 
 ### Added

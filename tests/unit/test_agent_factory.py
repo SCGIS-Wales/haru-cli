@@ -71,6 +71,23 @@ def test_named_agent_uses_its_model(mocker: Any) -> None:
     )
 
 
+def test_default_agent_model_override(mocker: Any) -> None:
+    """model_name overrides the default agent's model."""
+    mocker.patch("haru.agents.factory.Agent")
+    build_model = mocker.patch("haru.agents.factory.build_model", return_value="model-obj")
+
+    build_agent(make_config(), None, mocker.Mock(), model_name="deep")
+
+    assert build_model.call_args.args[0].model_id == "anthropic.b"
+
+
+def test_named_agent_rejects_model_override(mocker: Any) -> None:
+    """Named agents pin their model; overrides raise ConfigError."""
+    mocker.patch("haru.agents.factory.Agent")
+    with pytest.raises(ConfigError, match="default agent"):
+        build_agent(make_config(), "writer", mocker.Mock(), model_name="fast")
+
+
 def test_unknown_agent_raises(mocker: Any) -> None:
     """An unknown agent name raises ConfigError listing configured agents."""
     mocker.patch("haru.agents.factory.Agent")

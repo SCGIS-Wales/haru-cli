@@ -8,7 +8,7 @@ from rich.console import Console
 from haru.agents.factory import build_agent
 from haru.auth.session import build_boto3_session
 from haru.commands.streaming import collect_response, surface_guardrail
-from haru.config import load_config
+from haru.config import load_config, resolve_config_path
 from haru.config.schema import HaruConfig
 from haru.errors import HaruError
 from haru.observability.telemetry import configure_telemetry
@@ -51,10 +51,10 @@ def run_prompt(
 def run(prompt: str, config_path: Path | None, agent_name: str | None) -> None:
     """Run a single prompt and print the answer."""
     try:
-        config = load_config(config_path)
+        resolved = resolve_config_path(config_path)
+        config = load_config(resolved)
         configure_telemetry(config.observability)
-        prompts_root = config_path.parent / "prompts" if config_path is not None else None
-        answer = run_prompt(config, prompt, agent_name, prompts_root=prompts_root)
+        answer = run_prompt(config, prompt, agent_name, prompts_root=resolved.parent / "prompts")
     except HaruError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(answer)

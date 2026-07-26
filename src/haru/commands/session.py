@@ -4,8 +4,8 @@ from pathlib import Path
 
 import click
 
-from haru.config import load_config
-from haru.errors import HaruError
+from haru.config import HaruConfig, load_config, resolve_config_path
+from haru.errors import ConfigError, HaruError
 from haru.sessions.manager import list_sessions
 
 
@@ -24,8 +24,14 @@ def session() -> None:
 )
 def list_command(config_path: Path | None) -> None:
     """List stored session ids."""
+    config: HaruConfig | None = None
     try:
-        config = load_config(config_path, with_includes=False) if config_path else None
+        config = load_config(resolve_config_path(config_path), with_includes=False)
+    except ConfigError:
+        if config_path is not None:
+            raise click.ClickException("Could not load the given configuration.") from None
+        # No config anywhere: fall back to the default file-backend location.
+    try:
         session_ids = list_sessions(config)
     except HaruError as exc:
         raise click.ClickException(str(exc)) from exc
