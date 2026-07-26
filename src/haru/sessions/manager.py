@@ -5,13 +5,16 @@ The file backend persists to an explicit project-local directory
 backend stores sessions under a configurable bucket and prefix.
 """
 
-from pathlib import Path
+from __future__ import annotations
 
-import boto3
-from strands.session import FileSessionManager, S3SessionManager
-from strands.session.session_manager import SessionManager
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from haru.config.schema import HaruConfig, SessionsConfig
+
+if TYPE_CHECKING:
+    import boto3
+    from strands.session.session_manager import SessionManager
 
 _SESSION_DIR_PREFIX = "session_"
 
@@ -22,6 +25,8 @@ def build_session_manager(
     config: HaruConfig, session_id: str, *, boto_session: boto3.Session | None = None
 ) -> SessionManager:
     """Build the configured session manager (file by default) for ``session_id``."""
+    from strands.session import FileSessionManager, S3SessionManager
+
     sessions = config.sessions if config.sessions is not None else _DEFAULT_SESSIONS
     if sessions.backend == "s3":
         return S3SessionManager(
@@ -56,6 +61,8 @@ def list_sessions(
 
 
 def _list_s3_sessions(sessions: SessionsConfig, boto_session: boto3.Session | None) -> list[str]:
+    import boto3
+
     session = boto_session if boto_session is not None else boto3.Session()
     client = session.client("s3", region_name=sessions.region)
     prefix = f"{sessions.prefix.rstrip('/')}/{_SESSION_DIR_PREFIX}" if sessions.prefix else ""

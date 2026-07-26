@@ -5,6 +5,7 @@ from pathlib import Path
 
 import click
 
+from haru.auth.identity import effective_identity
 from haru.config import load_config, resolve_config_path, user_config_path
 from haru.config.schema import ModelConfig
 from haru.errors import HaruError
@@ -134,6 +135,13 @@ def show(config_path: Path | None) -> None:
     click.echo(f"App:          {loaded.app.name}")
     click.echo(f"SSO start:    {loaded.auth.sso.start_url}")
     click.echo(f"Bedrock:      {loaded.auth.bedrock_region}")
+    account, account_source, role, role_source = effective_identity(loaded.auth.sso)
+    if account is not None and role is not None:
+        click.echo(
+            f"Identity:     account {account} ({account_source}), role {role} ({role_source})"
+        )
+    else:
+        click.echo("Identity:     not selected - run 'haru login'")
     if loaded.models is not None:
         default = loaded.models.default_model
         names = ", ".join(

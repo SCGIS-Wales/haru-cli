@@ -59,7 +59,7 @@ def test_enabled_without_id_fails_closed() -> None:
 
 def test_build_model_attaches_guardrail_kwargs(mocker: Any) -> None:
     """build_model forwards guardrail kwargs into BedrockModel."""
-    bedrock_model = mocker.patch("haru.models.bedrock.BedrockModel")
+    bedrock_model = mocker.patch("strands.models.BedrockModel")
 
     build_model(MODEL_CFG, mocker.Mock(), guardrails=make_guardrails())
 
@@ -71,7 +71,7 @@ def test_build_model_attaches_guardrail_kwargs(mocker: Any) -> None:
 
 def test_build_model_without_guardrails_adds_nothing(mocker: Any) -> None:
     """build_model without guardrails passes no guardrail kwargs."""
-    bedrock_model = mocker.patch("haru.models.bedrock.BedrockModel")
+    bedrock_model = mocker.patch("strands.models.BedrockModel")
 
     build_model(MODEL_CFG, mocker.Mock())
 

@@ -6,18 +6,20 @@ Connections are made lazily by Strands; construction failures honour each
 server's ``continue_on_error`` flag so one bad server cannot abort startup.
 """
 
+from __future__ import annotations
+
 import contextlib
 import logging
-from collections.abc import Iterator, Mapping
-from typing import Any
-
-from mcp import StdioServerParameters, stdio_client
-from mcp.client.streamable_http import streamablehttp_client
-from strands.tools.mcp import MCPClient
+from typing import TYPE_CHECKING, Any
 
 from haru.config.schema import AgentConfig, MCPConfig, MCPServerConfig
 from haru.errors import ToolError
 from haru.tools.registry import resolve_builtin_tools
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping
+
+    from strands.tools.mcp import MCPClient
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +115,10 @@ def resolve_builtin_tools_from(registry: Mapping[str, Any], names: tuple[str, ..
 
 
 def _build_client(server: MCPServerConfig) -> MCPClient:
+    from mcp import StdioServerParameters, stdio_client
+    from mcp.client.streamable_http import streamablehttp_client
+    from strands.tools.mcp import MCPClient
+
     if server.transport == "stdio":
         params = StdioServerParameters(command=str(server.command), args=list(server.args))
 

@@ -50,8 +50,8 @@ def test_allowlist_excludes_shell_tools() -> None:
 
 def test_build_stdio_client(mocker: Any) -> None:
     """A stdio server constructs MCPClient over stdio_client parameters."""
-    mcp_client = mocker.patch("haru.tools.mcp.MCPClient")
-    stdio = mocker.patch("haru.tools.mcp.stdio_client")
+    mcp_client = mocker.patch("strands.tools.mcp.MCPClient")
+    stdio = mocker.patch("mcp.stdio_client")
 
     clients = build_mcp_clients(make_mcp_config(docs=STDIO_SERVER))
 
@@ -66,8 +66,8 @@ def test_build_stdio_client(mocker: Any) -> None:
 
 def test_build_streamable_http_client(mocker: Any) -> None:
     """A streamable-http server constructs MCPClient over streamablehttp_client."""
-    mcp_client = mocker.patch("haru.tools.mcp.MCPClient")
-    http = mocker.patch("haru.tools.mcp.streamablehttp_client")
+    mcp_client = mocker.patch("strands.tools.mcp.MCPClient")
+    http = mocker.patch("mcp.client.streamable_http.streamablehttp_client")
 
     clients = build_mcp_clients(make_mcp_config(api=HTTP_SERVER))
 
@@ -80,7 +80,7 @@ def test_build_streamable_http_client(mocker: Any) -> None:
 
 def test_disabled_server_is_skipped(mocker: Any) -> None:
     """Disabled servers never construct a client."""
-    mcp_client = mocker.patch("haru.tools.mcp.MCPClient")
+    mcp_client = mocker.patch("strands.tools.mcp.MCPClient")
 
     clients = build_mcp_clients(make_mcp_config(off={**STDIO_SERVER, "disabled": True}))
 
@@ -90,7 +90,7 @@ def test_disabled_server_is_skipped(mocker: Any) -> None:
 
 def test_construction_failure_with_continue_on_error(mocker: Any) -> None:
     """A failing server with continue_on_error is skipped, not fatal."""
-    mocker.patch("haru.tools.mcp.MCPClient", side_effect=RuntimeError("boom"))
+    mocker.patch("strands.tools.mcp.MCPClient", side_effect=RuntimeError("boom"))
 
     clients = build_mcp_clients(make_mcp_config(flaky={**STDIO_SERVER, "continue_on_error": True}))
 
@@ -99,7 +99,7 @@ def test_construction_failure_with_continue_on_error(mocker: Any) -> None:
 
 def test_construction_failure_without_continue_on_error(mocker: Any) -> None:
     """A failing server without the flag aborts startup with ToolError."""
-    mocker.patch("haru.tools.mcp.MCPClient", side_effect=RuntimeError("boom"))
+    mocker.patch("strands.tools.mcp.MCPClient", side_effect=RuntimeError("boom"))
 
     with pytest.raises(ToolError, match="strict"):
         build_mcp_clients(make_mcp_config(strict=STDIO_SERVER))

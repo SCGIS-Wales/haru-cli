@@ -48,7 +48,7 @@ def login(config_path: Path | None) -> None:
 
         token = run_login(auth, opener=_open)
         path = write_token_cache(token, auth.sso.start_url, auth.sso.sso_region)
-        identity = select_identity(auth.sso, token, chooser=_prompt_choice)
+        identity = select_identity(auth.sso, token, chooser=_prompt_choice, notify=click.echo)
     except HaruError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"Login successful. Token cached at {path}.")
@@ -57,4 +57,10 @@ def login(config_path: Path | None) -> None:
         if identity.account_name
         else identity.account_id
     )
-    click.echo(f"Using account {account_label}, role {identity.role_name}.")
+    account_note = (
+        "" if identity.account_source == "login selection" else (f" [{identity.account_source}]")
+    )
+    role_note = "" if identity.role_source == "login selection" else (f" [{identity.role_source}]")
+    click.echo(
+        f"Using account {account_label}{account_note}, role {identity.role_name}{role_note}."
+    )
