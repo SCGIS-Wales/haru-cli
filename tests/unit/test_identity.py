@@ -1,5 +1,6 @@
 """Tests for account/role discovery and persistence after SSO sign-in."""
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -8,8 +9,12 @@ import pytest
 from botocore.exceptions import ClientError
 
 from haru.auth.identity import (
+    SOURCE_CONFIG,
+    SOURCE_PIN_REJECTED,
+    SOURCE_SELECTED,
     SelectedIdentity,
     effective_identity,
+    identity_path,
     read_identity,
     select_identity,
     write_identity,
@@ -253,3 +258,89 @@ def test_effective_identity_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         "Pinned",
         "pinned in config",
     )
+
+
+def test_rejected_role_pin_is_persisted(tmp_path: Path) -> None:
+    """A pin the sign-in disproved is recorded alongside the identity."""
+    sso = FakeSso([{"accountId": "111122223333"}], {"111122223333": ["Assigned-A"]})
+
+    identity = select_identity(
+        make_sso_config(role_name="HaruBedrockInvoke"),
+        make_token(),
+        sso_client=sso,
+        cache_dir=tmp_path,
+    )
+
+    assert identity.role_name == "Assigned-A"
+    assert identity.role_source == SOURCE_SELECTED
+    stored = read_identity(START_URL, tmp_path)
+    assert stored is not None
+    assert stored.rejected_role_pin == "HaruBedrockInvoke"
+
+
+def test_rejected_pin_does_not_override_login_selection(tmp_path: Path) -> None:
+    """Regression: the login fallback must survive the next command.
+
+    Before this, effective_identity re-applied the pin unconditionally, so the
+    role chosen at login was silently discarded on the very next invocation.
+    """
+    sso = FakeSso([{"accountId": "111122223333"}], {"111122223333": ["Assigned-A"]})
+    config = make_sso_config(role_name="HaruBedrockInvoke")
+    select_identity(config, make_token(), sso_client=sso, cache_dir=tmp_path)
+
+    assert effective_identity(config, tmp_path) == (
+        "111122223333",
+        SOURCE_SELECTED,
+        "Assigned-A",
+        SOURCE_PIN_REJECTED,
+    )
+
+
+def test_valid_pin_still_wins(tmp_path: Path) -> None:
+    """A pin that is actually assigned keeps taking precedence."""
+    sso = FakeSso([{"accountId": "111122223333"}], {"111122223333": ["Assigned-A", "Pinned"]})
+    config = make_sso_config(role_name="Pinned")
+    identity = select_identity(config, make_token(), sso_client=sso, cache_dir=tmp_path)
+
+    assert identity.rejected_role_pin is None
+    assert effective_identity(config, tmp_path)[3] == SOURCE_CONFIG
+
+
+def test_changed_pin_gets_a_fresh_chance(tmp_path: Path) -> None:
+    """Only the exact disproved value loses; editing the pin re-arms it."""
+    write_identity(
+        SelectedIdentity(
+            account_id="111122223333", role_name="Assigned-A", rejected_role_pin="OldPin"
+        ),
+        START_URL,
+        tmp_path,
+    )
+
+    assert effective_identity(make_sso_config(role_name="NewPin"), tmp_path)[2:] == (
+        "NewPin",
+        SOURCE_CONFIG,
+    )
+
+
+def test_rejected_account_pin_falls_back(tmp_path: Path) -> None:
+    """An account pin the sign-in disproved also stops winning."""
+    sso = FakeSso([{"accountId": "111122223333"}], {"111122223333": ["Assigned-A"]})
+    config = make_sso_config(account_id="999999999999")
+    select_identity(config, make_token(), sso_client=sso, cache_dir=tmp_path)
+
+    assert effective_identity(config, tmp_path)[:2] == ("111122223333", SOURCE_PIN_REJECTED)
+
+
+def test_legacy_identity_file_without_new_fields(tmp_path: Path) -> None:
+    """A pre-0.1.7 identity file reads as 'nothing disproved', so pins still win."""
+    path = identity_path(START_URL, tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"accountId": "111122223333", "roleName": "Chosen", "accountName": None}),
+        encoding="utf-8",
+    )
+
+    stored = read_identity(START_URL, tmp_path)
+    assert stored is not None
+    assert stored.rejected_role_pin is None
+    assert effective_identity(make_sso_config(role_name="Pinned"), tmp_path)[3] == SOURCE_CONFIG

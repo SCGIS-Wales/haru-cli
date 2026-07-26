@@ -1,5 +1,7 @@
 """Tests for boto3 session construction from the cached SSO token."""
 
+import io
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,7 @@ from haru.auth.session import build_boto3_session
 from haru.auth.sso import ClientRegistration, SsoToken
 from haru.config.schema import AuthConfig
 from haru.errors import AuthError, AuthExpiredError
+from haru.logging_setup import configure_logging
 
 START_URL = "https://example.awsapps.com/start"
 
@@ -253,3 +256,52 @@ def test_config_pins_beat_stored_identity(tmp_path: Path, mocker: Any) -> None:
     sso_client.get_role_credentials.assert_called_once_with(
         roleName="PinnedRole", accountId="123456789012", accessToken="access-abc"
     )
+
+
+def test_debug_output_names_apis_without_leaking_credentials(tmp_path: Path, mocker: Any) -> None:
+    """--debug must show every AWS call and none of the secrets in it.
+
+    This is the security guarantee behind capping botocore at INFO: haru's own
+    DEBUG lines replace wire logging, so they must never carry a token, secret,
+    or credential.
+    """
+    seed_cache(tmp_path, expires_in=timedelta(minutes=5))
+    write_identity(
+        SelectedIdentity(account_id="111122223333", role_name="HaruBedrockInvoke"),
+        START_URL,
+        tmp_path,
+    )
+    stream = io.StringIO()
+    configure_logging(None, debug=True, stream=stream)
+    oidc = mocker.Mock()
+    oidc.create_token.return_value = {
+        "accessToken": "access-new-leaky",
+        "refreshToken": "refresh-new-leaky",
+        "expiresIn": 3600,
+    }
+    sso_client = mocker.Mock()
+    sso_client.get_role_credentials.return_value = ROLE_CREDENTIALS
+
+    try:
+        build_boto3_session(make_config(), oidc=oidc, sso_client=sso_client, cache_dir=tmp_path)
+    finally:
+        root = logging.getLogger()
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+            handler.close()
+
+    output = stream.getvalue()
+    assert "aws sso-oidc.CreateToken grant_type=refresh_token" in output
+    assert "aws sso.GetRoleCredentials" in output
+    assert "role_name=HaruBedrockInvoke" in output
+    for secret in (
+        "access-abc",
+        "access-new-leaky",
+        "refresh-abc",
+        "refresh-new-leaky",
+        "client-secret",
+        "AKIAEXAMPLE",
+        "secret-key",
+        "session-token",
+    ):
+        assert secret not in output, f"{secret} leaked into --debug output"

@@ -11,9 +11,9 @@ from pathlib import Path
 import click
 
 from haru.auth.cache import write_token_cache
-from haru.auth.identity import select_identity
+from haru.auth.identity import SOURCE_SELECTED, select_identity
 from haru.auth.sso import run_login
-from haru.config import load_config
+from haru.commands._common import load_cli_config
 from haru.errors import HaruError
 
 
@@ -37,7 +37,7 @@ def _prompt_choice(question: str, labels: list[str]) -> int:
 def login(config_path: Path | None) -> None:
     """Sign in to AWS IAM Identity Center via the browser (PKCE)."""
     try:
-        config = load_config(config_path, with_includes=False)
+        _, config = load_cli_config(config_path, with_includes=False)
         auth = config.auth
 
         def _open(url: str) -> None:
@@ -58,9 +58,25 @@ def login(config_path: Path | None) -> None:
         else identity.account_id
     )
     account_note = (
-        "" if identity.account_source == "login selection" else (f" [{identity.account_source}]")
+        "" if identity.account_source == SOURCE_SELECTED else (f" [{identity.account_source}]")
     )
-    role_note = "" if identity.role_source == "login selection" else (f" [{identity.role_source}]")
+    role_note = "" if identity.role_source == SOURCE_SELECTED else (f" [{identity.role_source}]")
     click.echo(
         f"Using account {account_label}{account_note}, role {identity.role_name}{role_note}."
+    )
+    _warn_rejected_pin("auth.sso.account_id", identity.rejected_account_pin, identity.account_id)
+    _warn_rejected_pin("auth.sso.role_name", identity.rejected_role_pin, identity.role_name)
+
+
+def _warn_rejected_pin(key: str, rejected: str | None, using: str) -> None:
+    """Name a config pin this sign-in disproved, and what haru uses instead."""
+    if rejected is None:
+        return
+    click.echo(
+        click.style(
+            f"Ignoring {key}: {rejected!r} is not assigned to you."
+            f" haru will use {using} until you change or remove that line"
+            " from your configuration.",
+            fg="yellow",
+        )
     )

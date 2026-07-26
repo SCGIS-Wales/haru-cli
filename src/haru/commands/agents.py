@@ -4,7 +4,7 @@ from pathlib import Path
 
 import click
 
-from haru.config import load_config, resolve_config_path
+from haru.commands._common import load_cli_config
 from haru.errors import HaruError
 
 
@@ -19,7 +19,7 @@ from haru.errors import HaruError
 def agents(config_path: Path | None) -> None:
     """List configured agents (model, prompt, tools, MCP servers)."""
     try:
-        loaded = load_config(resolve_config_path(config_path))
+        _, loaded = load_cli_config(config_path)
     except HaruError as exc:
         raise click.ClickException(str(exc)) from exc
 

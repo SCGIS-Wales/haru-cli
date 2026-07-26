@@ -101,6 +101,39 @@ def test_login_command(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
     assert select.call_args.args[0] == auth.sso
 
 
+def test_login_names_a_disproved_pin(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """Login says which config line it is ignoring and what it uses instead."""
+    config_path = tmp_path / "haru.yaml"
+    config_path.write_text(BASE_CONFIG, encoding="utf-8")
+    now = datetime.now(UTC)
+    mocker.patch(
+        "haru.commands.login.run_login",
+        return_value=SsoToken(
+            access_token="access-abc",
+            refresh_token=None,
+            expires_at=now + timedelta(hours=1),
+            registration=ClientRegistration(
+                client_id="client-123", client_secret="client-secret", expires_at=now
+            ),
+        ),
+    )
+    mocker.patch("haru.commands.login.write_token_cache", return_value=tmp_path / "cache.json")
+    mocker.patch(
+        "haru.commands.login.select_identity",
+        return_value=SelectedIdentity(
+            account_id="111122223333",
+            role_name="Assigned-A",
+            rejected_role_pin="HaruBedrockInvoke",
+        ),
+    )
+
+    result = runner.invoke(cli, ["login", "--config", str(config_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "Ignoring auth.sso.role_name: 'HaruBedrockInvoke'" in result.output
+    assert "haru will use Assigned-A" in result.output
+
+
 def make_config(tmp_path: Path) -> Path:
     """Write a base config file and return its path."""
     config_path = tmp_path / "haru.yaml"

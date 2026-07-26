@@ -7,6 +7,7 @@ with ``CreateToken``. Only loopback redirect URIs are accepted.
 """
 
 import html
+import logging
 import secrets
 import time
 import webbrowser
@@ -21,6 +22,9 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from haru.auth.pkce import generate_pkce_pair
 from haru.config.schema import AuthConfig
 from haru.errors import AuthError
+from haru.logging_setup import log_aws_call, log_aws_error
+
+logger = logging.getLogger(__name__)
 
 _LOOPBACK_HOST = "127.0.0.1"
 _CALLBACK_PATH = "/oauth/callback"
@@ -124,6 +128,13 @@ def register_client(
     host = urlsplit(redirect_uri).hostname
     if host != _LOOPBACK_HOST:
         raise AuthError(f"Redirect URI must be a {_LOOPBACK_HOST} loopback address, got {host!r}")
+    log_aws_call(
+        logger,
+        "sso-oidc.RegisterClient",
+        client_name=client_name,
+        redirect_uri=redirect_uri,
+        scopes=_AUTHORIZE_SCOPES,
+    )
     try:
         response = oidc.register_client(
             clientName=client_name,
@@ -134,7 +145,18 @@ def register_client(
             grantTypes=["authorization_code", "refresh_token"],
         )
     except ClientError as exc:
+        log_aws_error(
+            logger, "sso-oidc.RegisterClient", exc.response.get("Error", {}).get("Code", "")
+        )
         raise AuthError(f"OIDC client registration failed: {exc}") from exc
+    # clientId is deliberately omitted: it pairs with the cached clientSecret
+    # and adds nothing when debugging.
+    log_aws_call(
+        logger,
+        "sso-oidc.RegisterClient",
+        outcome="ok",
+        secret_expires_at=response.get("clientSecretExpiresAt"),
+    )
     return ClientRegistration(
         client_id=response["clientId"],
         client_secret=response["clientSecret"],
@@ -166,6 +188,12 @@ def exchange_code(
     """Exchange an authorization code (plus PKCE verifier) for an SSO token."""
     from botocore.exceptions import ClientError
 
+    log_aws_call(
+        logger,
+        "sso-oidc.CreateToken",
+        grant_type="authorization_code",
+        redirect_uri=redirect_uri,
+    )
     try:
         response = oidc.create_token(
             clientId=registration.client_id,
@@ -176,7 +204,15 @@ def exchange_code(
             redirectUri=redirect_uri,
         )
     except ClientError as exc:
+        log_aws_error(logger, "sso-oidc.CreateToken", exc.response.get("Error", {}).get("Code", ""))
         raise AuthError(f"Token exchange failed: {exc}") from exc
+    log_aws_call(
+        logger,
+        "sso-oidc.CreateToken",
+        outcome="ok",
+        expires_in=response.get("expiresIn"),
+        has_refresh_token=response.get("refreshToken") is not None,
+    )
     return SsoToken(
         access_token=response["accessToken"],
         refresh_token=response.get("refreshToken"),

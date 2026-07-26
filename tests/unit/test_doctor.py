@@ -128,8 +128,29 @@ def test_all_roles_matrix_and_verdict(runner: CliRunner, tmp_path: Path, mocker:
     assert "Use account 111122223333, role BedrockDeveloper" in result.output
 
 
-def test_all_roles_no_usable_role(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
-    """When nothing works, the verdict says so and names the missing actions."""
+def test_all_roles_verdict_is_definitive_with_invoke(
+    runner: CliRunner, tmp_path: Path, mocker: Any
+) -> None:
+    """A real Converse call was made, so the strong claim is earned."""
+    mocker.patch(
+        "haru.diagnostics.matrix.probe_roles",
+        return_value=iter(
+            [RoleProbe("881490127383", "prod", "TRPAmazonQUsers", "ok", "denied", "denied")]
+        ),
+    )
+
+    result = runner.invoke(
+        cli, ["doctor", "--config", str(write_config(tmp_path)), "--all-roles", "--invoke"]
+    )
+
+    assert "No assigned role could reach Bedrock" in result.output
+    assert "bedrock:InvokeModel" in result.output
+
+
+def test_all_roles_verdict_is_hedged_without_invoke(
+    runner: CliRunner, tmp_path: Path, mocker: Any
+) -> None:
+    """Only the control plane was tested, so the verdict must not claim more."""
     mocker.patch(
         "haru.diagnostics.matrix.probe_roles",
         return_value=iter([RoleProbe("881490127383", "prod", "TRPAmazonQUsers", "ok", "denied")]),
@@ -137,8 +158,40 @@ def test_all_roles_no_usable_role(runner: CliRunner, tmp_path: Path, mocker: Any
 
     result = runner.invoke(cli, ["doctor", "--config", str(write_config(tmp_path)), "--all-roles"])
 
-    assert "No assigned role could reach Bedrock" in result.output
-    assert "bedrock:InvokeModel" in result.output
+    assert "control plane only" in result.output
+    assert "--all-roles --invoke" in result.output
+    assert "None of your permission sets grant" not in result.output
+
+
+def test_all_roles_usable_by_control_plane_only_is_hedged(
+    runner: CliRunner, tmp_path: Path, mocker: Any
+) -> None:
+    """A recommendation from ListFoundationModels alone is flagged as unproven."""
+    mocker.patch(
+        "haru.diagnostics.matrix.probe_roles",
+        return_value=iter([RoleProbe("111122223333", "sandbox", "BedrockDeveloper", "ok", "ok")]),
+    )
+
+    result = runner.invoke(cli, ["doctor", "--config", str(write_config(tmp_path)), "--all-roles"])
+
+    assert "Use account 111122223333, role BedrockDeveloper" in result.output
+    assert "indicative rather than proof" in result.output
+
+
+def test_all_roles_json_reports_proven(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """A skipped invoke is never reported as proven, even when usable."""
+    mocker.patch(
+        "haru.diagnostics.matrix.probe_roles",
+        return_value=iter([RoleProbe("1", "n", "R", "ok", "ok")]),
+    )
+
+    result = runner.invoke(
+        cli, ["doctor", "--config", str(write_config(tmp_path)), "--all-roles", "--json"]
+    )
+
+    payload = json.loads(result.output)
+    assert payload[0]["usable"] is True
+    assert payload[0]["proven"] is False
 
 
 def test_all_roles_json(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:

@@ -191,6 +191,31 @@ def test_identity_states(tmp_path: Path) -> None:
     assert "pinned in config" in result.detail
 
 
+def test_identity_warns_about_a_disproved_pin(tmp_path: Path) -> None:
+    """A pin sign-in disproved is reported, not silently ignored."""
+    write_identity(
+        SelectedIdentity("111122223333", "Assigned-A", rejected_role_pin="HaruBedrockInvoke"),
+        START_URL,
+        tmp_path,
+    )
+    pinned = make_config(
+        auth={
+            "sso": {
+                "start_url": START_URL,
+                "sso_region": "us-east-1",
+                "role_name": "HaruBedrockInvoke",
+            },
+            "bedrock_region": "us-east-1",
+        }
+    )
+
+    result = check_identity(pinned, tmp_path)
+
+    assert result.status == "warn"
+    assert "Assigned-A" in result.detail
+    assert "auth.sso.role_name: HaruBedrockInvoke" in (result.remediation or "")
+
+
 def test_caller_identity_reports_arn() -> None:
     """The assumed-role ARN is surfaced for the AWS admin."""
     session = FakeSession(

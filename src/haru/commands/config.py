@@ -6,7 +6,8 @@ from pathlib import Path
 import click
 
 from haru.auth.identity import effective_identity
-from haru.config import load_config, resolve_config_path, user_config_path
+from haru.commands._common import load_cli_config
+from haru.config import user_config_path
 from haru.config.schema import ModelConfig
 from haru.errors import HaruError
 
@@ -126,8 +127,7 @@ def init(  # noqa: PLR0913, PLR0917 - one option per prompted setting; Click pas
 def show(config_path: Path | None) -> None:
     """Show the resolved configuration (no secrets)."""
     try:
-        resolved = resolve_config_path(config_path)
-        loaded = load_config(resolved)
+        resolved, loaded = load_cli_config(config_path)
     except HaruError as exc:
         raise click.ClickException(str(exc)) from exc
 
