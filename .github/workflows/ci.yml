@@ -42,3 +42,79 @@ jobs:
 
       - name: CLI smoke test
         run: uv run haru --version
+
+  # Auto-tag on push to main (dcert pattern): determine the next semver patch
+  # version from the latest v* tag, bump pyproject.toml + uv.lock with a
+  # [skip ci] commit, push the tag, then explicitly dispatch the release
+  # workflow at that tag (tags pushed with GITHUB_TOKEN do not trigger
+  # workflows on their own; workflow_dispatch is exempt).
+  auto-tag:
+    name: Auto-tag release
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Determine next version
+        id: version
+        run: |
+          LATEST_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            # First release: use the version already declared in pyproject.toml
+            NEXT=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          else
+            CURRENT="${LATEST_TAG#v}"
+            MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+            MINOR=$(echo "$CURRENT" | cut -d. -f2)
+            PATCH=$(echo "$CURRENT" | cut -d. -f3 | cut -d- -f1)
+            NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          fi
+          echo "version=${NEXT}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${NEXT}" >> "$GITHUB_OUTPUT"
+          echo "Next version: ${NEXT} (tag: v${NEXT})"
+
+      - name: Check if tag already exists
+        id: check_tag
+        run: |
+          if git rev-parse "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${{ steps.version.outputs.tag }} already exists, skipping"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump version, commit, and tag
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
+          uv lock
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add pyproject.toml uv.lock
+            git commit -m "chore: bump version to ${VERSION} [skip ci]"
+            git push origin main
+          fi
+
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "::notice::Created tag $TAG"
+
+      - name: Dispatch release workflow
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml --ref "${{ steps.version.outputs.tag }}"
