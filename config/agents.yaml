@@ -1,0 +1,30 @@
+agents:
+  supervisor:
+    model: opus-5
+    system_prompt_ref: supervisor
+    tools: [calculator, current_time]
+    mcp_servers: [aws-docs]
+  researcher:
+    model: sonnet-5
+    system_prompt_ref: researcher
+    tools: [http_request]
+    mcp_servers: [aws-docs]
+  writer:
+    model: sonnet-5
+    system_prompt_ref: writer
+    tools: []
+orchestration:
+  default_pattern: supervisor        # one of supervisor | swarm | graph
+  swarm:
+    members: [researcher, writer]
+    max_handoffs: 8
+    execution_timeout_seconds: 300
+  graph:
+    nodes:
+      - id: research
+        agent: researcher
+      - id: write
+        agent: writer
+    edges:
+      - from: research
+        to: write
