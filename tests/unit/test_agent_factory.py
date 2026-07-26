@@ -66,7 +66,9 @@ def test_named_agent_uses_its_model(mocker: Any) -> None:
     build_agent(make_config(), "writer", mocker.Mock())
 
     assert build_model.call_args.args[0].model_id == "anthropic.b"
-    agent_cls.assert_called_once_with(model="model-obj", system_prompt=None)
+    agent_cls.assert_called_once_with(
+        model="model-obj", system_prompt=None, tools=[], name="writer"
+    )
 
 
 def test_unknown_agent_raises(mocker: Any) -> None:
@@ -95,7 +97,9 @@ def test_agent_resolves_system_prompt_ref(mocker: Any, tmp_path: Path) -> None:
         make_config_with_prompt_ref("writer"), "writer", mocker.Mock(), prompts_root=tmp_path
     )
 
-    agent_cls.assert_called_once_with(model="model-obj", system_prompt="Write well.")
+    agent_cls.assert_called_once_with(
+        model="model-obj", system_prompt="Write well.", tools=[], name="writer"
+    )
 
 
 def test_agent_composed_prompt_ref(mocker: Any, tmp_path: Path) -> None:
@@ -112,7 +116,9 @@ def test_agent_composed_prompt_ref(mocker: Any, tmp_path: Path) -> None:
         prompts_root=tmp_path,
     )
 
-    agent_cls.assert_called_once_with(model="model-obj", system_prompt="Base rules.\n\nWrite well.")
+    agent_cls.assert_called_once_with(
+        model="model-obj", system_prompt="Base rules.\n\nWrite well.", tools=[], name="writer"
+    )
 
 
 def test_agent_missing_prompt_ref_raises(mocker: Any, tmp_path: Path) -> None:
