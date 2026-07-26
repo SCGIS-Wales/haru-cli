@@ -210,6 +210,78 @@ def test_all_roles_json(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
     assert payload[0]["usable"] is True
 
 
+CONFIG_WITH_MODEL = (
+    CONFIG
+    + """\
+models:
+  default_model: sonnet
+  models:
+    sonnet:
+      model_id: anthropic.claude-sonnet-5
+      region: us-east-1
+      max_tokens: 4096
+"""
+)
+
+
+def test_admin_request_is_pasteable_and_evidence_backed(
+    runner: CliRunner, tmp_path: Path, mocker: Any
+) -> None:
+    """--all-roles --admin-request emits a complete request with the probe matrix."""
+    mocker.patch(
+        "haru.diagnostics.matrix.probe_roles",
+        return_value=iter(
+            [RoleProbe("881490127383", "amazonq-prod", "TRPAmazonQUsers", "ok", "denied")]
+        ),
+    )
+    path = tmp_path / "haru.yaml"
+    path.write_text(CONFIG_WITH_MODEL, encoding="utf-8")
+
+    result = runner.invoke(cli, ["doctor", "--config", str(path), "--all-roles", "--admin-request"])
+
+    assert result.exit_code == 0, result.output
+    out = result.output
+    # Evidence from the probe.
+    assert "TRPAmazonQUsers" in out
+    assert "https://example.awsapps.com/start" in out
+    # The policy, including the per-region foundation-model ARNs.
+    assert "bedrock:InvokeModelWithResponseStream" in out
+    assert "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-*" in out
+    assert "881490127383:inference-profile/us.anthropic.claude-*" in out
+    # The configured model and the Kiro explanation.
+    assert "us.anthropic.claude-sonnet-5 in us-east-1" in out
+    assert "different services" in out
+    # It is valid JSON where the policy block is.
+    start = out.index("{")
+    end = out.index("}\n\nModels") + 1
+    json.loads(out[start:end])
+
+
+def test_admin_request_requires_all_roles(runner: CliRunner, tmp_path: Path) -> None:
+    """--admin-request without --all-roles is rejected, not silently ignored."""
+    result = runner.invoke(
+        cli, ["doctor", "--config", str(write_config(tmp_path)), "--admin-request"]
+    )
+
+    assert result.exit_code != 0
+    assert "needs --all-roles" in result.output
+
+
+def test_denied_verdict_points_at_admin_request(
+    runner: CliRunner, tmp_path: Path, mocker: Any
+) -> None:
+    """The plain denied verdict names the admin-request flag."""
+    mocker.patch(
+        "haru.diagnostics.matrix.probe_roles",
+        return_value=iter([RoleProbe("881490127383", "prod", "TRPAmazonQUsers", "ok", "denied")]),
+    )
+
+    result = runner.invoke(cli, ["doctor", "--config", str(write_config(tmp_path)), "--all-roles"])
+
+    assert "authorization gap, not an authentication one" in result.output
+    assert "--admin-request" in result.output
+
+
 def test_missing_config_is_clean(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

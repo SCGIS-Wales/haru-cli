@@ -73,6 +73,14 @@ otherwise, and remembered for later sessions. Pin `auth.sso.account_id` /
 are validated against your actual assignments, and a stale pin falls back to
 the chooser with a warning rather than failing later.
 
+Sign-in is the same OAuth 2.0 authorization-code + PKCE flow that `aws sso
+login` and Amazon's own AI tools use; it is not the hard part. Reaching Bedrock
+*additionally* requires `bedrock:InvokeModel` on a role you are assigned — a
+separate IAM grant, not something sign-in confers. If `haru chat` fails after a
+clean login, run `haru doctor --all-roles --admin-request` for a pasteable
+access request to send your AWS administrator, and see
+[docs/troubleshooting.md](docs/troubleshooting.md).
+
 A pin that sign-in proves is not assigned to you stops being applied by later
 commands too, so the fallback actually sticks; haru names the offending line
 and never edits your configuration. Editing or removing the pin gives it a

@@ -37,6 +37,12 @@ _MARK = {"pass": "PASS", "fail": "FAIL", "warn": "WARN", "skip": "SKIP"}
 @click.option(
     "--max-roles", default=25, show_default=True, help="Cap combinations probed by --all-roles."
 )
+@click.option(
+    "--admin-request",
+    "admin_request",
+    is_flag=True,
+    help="With --all-roles, print a pasteable Bedrock access request for your AWS admin.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 def doctor(  # noqa: PLR0913, PLR0917 - one option per flag; Click passes positionally
     config_path: Path | None,
@@ -44,11 +50,15 @@ def doctor(  # noqa: PLR0913, PLR0917 - one option per flag; Click passes positi
     all_roles: bool,
     account_filter: str | None,
     max_roles: int,
+    admin_request: bool,
     as_json: bool,
 ) -> None:
     """Check configuration, sign-in, and Bedrock permissions."""
     from haru.diagnostics.checks import run_checks
     from haru.diagnostics.matrix import probe_roles
+
+    if admin_request and not all_roles:
+        raise click.ClickException("--admin-request needs --all-roles for the access evidence.")
 
     try:
         resolved, config = load_cli_config(config_path)
@@ -67,6 +77,9 @@ def doctor(  # noqa: PLR0913, PLR0917 - one option per flag; Click passes positi
             )
         except HaruError as exc:
             raise click.ClickException(str(exc)) from exc
+        if admin_request:
+            click.echo(_admin_request(config, probes, invoke=invoke))
+            return
         _report_matrix(probes, invoke=invoke, as_json=as_json)
         return
 
@@ -170,12 +183,142 @@ def _report_matrix(probes: list[Any], *, invoke: bool, as_json: bool) -> None:
             " bedrock:InvokeModel / bedrock:InvokeModelWithResponseStream."
             " Ask your AWS admin for a Bedrock permission set - see docs/troubleshooting.md."
         )
-        return
+    else:
+        click.echo(
+            "No assigned role could list Bedrock models (bedrock:ListFoundationModels).\n"
+            "That is the control plane only. A role granted bedrock:InvokeModel on a\n"
+            "specific model ARN without ListFoundationModels - a common least-privilege\n"
+            "setup - looks identical here.\n"
+            "Re-run 'haru doctor --all-roles --invoke' for a definitive answer"
+            " (one minimal billable Bedrock call per role)."
+        )
     click.echo(
-        "No assigned role could list Bedrock models (bedrock:ListFoundationModels).\n"
-        "That is the control plane only. A role granted bedrock:InvokeModel on a\n"
-        "specific model ARN without ListFoundationModels - a common least-privilege\n"
-        "setup - looks identical here.\n"
-        "Re-run 'haru doctor --all-roles --invoke' for a definitive answer"
-        " (one minimal billable Bedrock call per role)."
+        "\nSigning in worked; this is an authorization gap, not an authentication one.\n"
+        "Run 'haru doctor --all-roles --admin-request' for a request to send your admin."
     )
+
+
+def _admin_request(config: Any, probes: list[Any], *, invoke: bool) -> str:
+    """Build a self-contained, pasteable Bedrock access request for an admin.
+
+    Reuses the probe evidence and the configured models; adds no AWS calls and
+    contains no secrets. The IAM policy names the underlying foundation-model
+    ARNs in every region a ``us.`` inference profile routes to, the omission
+    that produces the most confusing AccessDenied.
+    """
+    from haru.models.bedrock import get_model_config, list_models, resolve_model_id
+
+    sso = config.auth.sso
+    accounts = sorted({probe.account_id for probe in probes})
+    account = accounts[0] if len(accounts) == 1 else "ACCOUNT_ID"
+
+    models = []
+    regions: set[str] = set()
+    if config.models is not None:
+        for name in list_models(config):
+            entry = get_model_config(config, name)
+            model_id = resolve_model_id(entry.model_id)
+            models.append((name, model_id, entry.region))
+            regions.update(_routed_regions(model_id, entry.region))
+    tested = "a real InvokeModel call" if invoke else "ListFoundationModels"
+
+    lines = [
+        "Subject: Amazon Bedrock access request for the haru CLI",
+        "",
+        "I can sign in to IAM Identity Center but cannot invoke Amazon Bedrock.",
+        f"Identity Center start URL: {sso.start_url}",
+        "",
+        "What I verified (haru doctor --all-roles):",
+        f"  Every account and role assigned to me was probed with {tested}.",
+    ]
+    if probes:
+        lines.append(f"  {'ACCOUNT':<14}{'ROLE':<28}{'CREDS':<8}{'BEDROCK':<9}INVOKE")
+        for probe in probes:
+            lines.append(
+                f"  {probe.account_id:<14}{probe.role_name:<28}"
+                f"{probe.credentials:<8}{probe.bedrock:<9}{probe.invoke}"
+            )
+    else:
+        lines.append("  No accounts or roles are assigned to this sign-in.")
+
+    lines += [
+        "",
+        "Why Kiro or Amazon Q working is not evidence that this already works:",
+        "  Amazon Q Developer is a subscription to AWS-operated clients (Kiro, the",
+        "  Q CLI, the IDE plugins) reached with a bearer token; it needs no bedrock:*",
+        "  IAM permissions and its API is not public. haru calls Amazon Bedrock in",
+        "  our own account over SigV4, so it needs bedrock:InvokeModel on a role I am",
+        "  assigned. The two are different services; one cannot stand in for the other.",
+        "",
+        "What I need: attach the policy below to a permission set assigned to me.",
+        "  Both invoke actions are required. haru defaults to us. cross-region",
+        "  inference profiles, so Bedrock authorizes against the underlying",
+        "  foundation-model ARN in every region the profile routes to - a policy",
+        "  naming only the inference-profile ARN fails with an AccessDenied that",
+        "  cites a foundation-model ARN I never configured.",
+        "",
+        _policy_json(account, sorted(regions) or ["us-east-1", "us-east-2", "us-west-2"]),
+    ]
+    if models:
+        lines += ["", "Models haru is configured to use (scope the policy to these):"]
+        lines += [f"  {name}: {model_id} in {region}" for name, model_id, region in models]
+    lines += [
+        "",
+        "Also enable model access for these models in the Bedrock console",
+        "(Bedrock > Model access), which is separate from IAM.",
+    ]
+    return "\n".join(lines)
+
+
+def _routed_regions(model_id: str, region: str) -> set[str]:
+    """Regions a cross-region inference profile may route to, incl. the home one."""
+    routed = {
+        "us.": {"us-east-1", "us-east-2", "us-west-2"},
+        "eu.": {"eu-west-1", "eu-west-3", "eu-central-1", "eu-north-1"},
+        "apac.": {
+            "ap-northeast-1",
+            "ap-northeast-2",
+            "ap-south-1",
+            "ap-southeast-1",
+            "ap-southeast-2",
+        },
+    }
+    for prefix, regions in routed.items():
+        if model_id.startswith(prefix):
+            return regions | {region}
+    return {region}
+
+
+def _policy_json(account: str, regions: list[str]) -> str:
+    """Render the least-privilege Bedrock invoke policy for the admin to attach."""
+    profile_region = regions[0]
+    foundation = [
+        f"arn:aws:bedrock:{region}::foundation-model/anthropic.claude-*" for region in regions
+    ]
+    policy = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "InvokeViaInferenceProfile",
+                "Effect": "Allow",
+                "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+                "Resource": (
+                    f"arn:aws:bedrock:{profile_region}:{account}:"
+                    "inference-profile/us.anthropic.claude-*"
+                ),
+            },
+            {
+                "Sid": "InvokeUnderlyingFoundationModelsInEveryRoutedRegion",
+                "Effect": "Allow",
+                "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+                "Resource": foundation,
+            },
+            {
+                "Sid": "Diagnostics",
+                "Effect": "Allow",
+                "Action": ["bedrock:ListFoundationModels", "bedrock:GetInferenceProfile"],
+                "Resource": "*",
+            },
+        ],
+    }
+    return json_module.dumps(policy, indent=2)
