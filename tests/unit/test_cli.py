@@ -1,14 +1,47 @@
 """Tests for the haru Click command group."""
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from click.testing import CliRunner
+from rich.console import Console
 
 from haru.auth.sso import ClientRegistration, SsoToken
 from haru.cli import cli
+from haru.commands.chat import run_chat
+from haru.config.schema import HaruConfig
+from haru.errors import AuthExpiredError
+
+
+class FakeAgent:
+    """Agent stand-in yielding a deterministic stream of events."""
+
+    def __init__(self, events: list[dict[str, Any]]) -> None:
+        self._events = events
+        self.prompts: list[str] = []
+
+    def stream_async(self, prompt: str) -> AsyncIterator[dict[str, Any]]:
+        self.prompts.append(prompt)
+
+        async def _generate() -> AsyncIterator[dict[str, Any]]:
+            for event in self._events:
+                yield event
+
+        return _generate()
+
+
+def hello_events(stop_reason: str = "end_turn") -> list[dict[str, Any]]:
+    """A two-chunk streamed answer followed by a result event."""
+    return [
+        {"data": "Hello "},
+        {"data": "world"},
+        {"result": SimpleNamespace(stop_reason=stop_reason)},
+    ]
+
 
 BASE_CONFIG = """\
 app:
@@ -57,6 +90,110 @@ def test_login_command(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
     auth = run_login.call_args.args[0]
     assert auth.sso.start_url == "https://example.awsapps.com/start"
     write_cache.assert_called_once_with(token, auth.sso.start_url, "us-east-1")
+
+
+def make_config(tmp_path: Path) -> Path:
+    """Write a base config file and return its path."""
+    config_path = tmp_path / "haru.yaml"
+    config_path.write_text(BASE_CONFIG, encoding="utf-8")
+    return config_path
+
+
+def test_run_command_streams_answer(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """``haru run`` prints the full answer and exits 0."""
+    mocker.patch("haru.commands.run.build_boto3_session")
+    agent = FakeAgent(hello_events())
+    mocker.patch("haru.commands.run.build_agent", return_value=agent)
+
+    result = runner.invoke(cli, ["run", "say hi", "--config", str(make_config(tmp_path))])
+
+    assert result.exit_code == 0
+    assert "Hello world" in result.output
+    assert agent.prompts == ["say hi"]
+
+
+def test_run_command_surfaces_guardrail(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """A guardrail-intervened result produces a visible warning."""
+    mocker.patch("haru.commands.run.build_boto3_session")
+    agent = FakeAgent(hello_events(stop_reason="guardrail_intervened"))
+    mocker.patch("haru.commands.run.build_agent", return_value=agent)
+
+    result = runner.invoke(cli, ["run", "say hi", "--config", str(make_config(tmp_path))])
+
+    assert result.exit_code == 0
+    assert "Guardrail intervened" in result.output
+
+
+def test_run_command_auth_error_is_clean(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """Auth failures exit non-zero with a clean message, not a traceback."""
+    mocker.patch(
+        "haru.commands.run.build_boto3_session",
+        side_effect=AuthExpiredError("No cached SSO token; run 'haru login'"),
+    )
+
+    result = runner.invoke(cli, ["run", "say hi", "--config", str(make_config(tmp_path))])
+
+    assert result.exit_code == 1
+    assert "haru login" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_chat_command_streams_and_exits(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """``haru chat`` streams a response and leaves cleanly on 'exit'."""
+    mocker.patch("haru.commands.chat.build_boto3_session")
+    agent = FakeAgent(hello_events())
+    mocker.patch("haru.commands.chat.build_agent", return_value=agent)
+
+    result = runner.invoke(
+        cli, ["chat", "--config", str(make_config(tmp_path))], input="say hi\nexit\n"
+    )
+
+    assert result.exit_code == 0
+    assert "Hello world" in result.output
+    assert "Goodbye" in result.output
+    assert agent.prompts == ["say hi"]
+
+
+def test_chat_keyboard_interrupt_is_clean(mocker: Any) -> None:
+    """Ctrl-C at the prompt ends the chat loop gracefully."""
+    mocker.patch("haru.commands.chat.build_boto3_session")
+    mocker.patch("haru.commands.chat.build_agent", return_value=FakeAgent(hello_events()))
+    config = HaruConfig.model_validate(
+        {
+            "app": {"name": "haru"},
+            "auth": {
+                "sso": {
+                    "start_url": "https://example.awsapps.com/start",
+                    "sso_region": "us-east-1",
+                    "account_id_env": "HARU_AWS_ACCOUNT_ID",
+                    "role_name": "HaruBedrockInvoke",
+                },
+                "bedrock_region": "us-east-1",
+            },
+        }
+    )
+    console = Console(record=True, width=100)
+
+    def interrupt(_: str) -> str:
+        raise KeyboardInterrupt
+
+    run_chat(config, None, console=console, read_input=interrupt)
+
+    assert "Goodbye" in console.export_text()
+
+
+def test_chat_skips_blank_lines(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """Blank input lines are ignored rather than sent to the agent."""
+    mocker.patch("haru.commands.chat.build_boto3_session")
+    agent = FakeAgent(hello_events())
+    mocker.patch("haru.commands.chat.build_agent", return_value=agent)
+
+    result = runner.invoke(
+        cli, ["chat", "--config", str(make_config(tmp_path))], input="\n\nquit\n"
+    )
+
+    assert result.exit_code == 0
+    assert agent.prompts == []
 
 
 def test_login_opener_echoes_url_and_opens_browser(
