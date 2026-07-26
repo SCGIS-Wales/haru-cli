@@ -19,13 +19,14 @@ def run_prompt(
     agent_name: str | None = None,
     *,
     console: Console | None = None,
+    prompts_root: Path | None = None,
 ) -> str:
     """Execute ``prompt`` once and return the full response text.
 
     Guardrail interventions are surfaced on ``console`` (stderr by default).
     """
     session = build_boto3_session(config.auth)
-    agent = build_agent(config, agent_name, session)
+    agent = build_agent(config, agent_name, session, prompts_root=prompts_root)
     chunks: list[str] = []
     result = collect_response(agent, prompt, chunks.append)
     surface_guardrail(result, console if console is not None else Console(stderr=True))
@@ -46,7 +47,8 @@ def run(prompt: str, config_path: Path | None, agent_name: str | None) -> None:
     """Run a single prompt and print the answer."""
     try:
         config = load_config(config_path)
-        answer = run_prompt(config, prompt, agent_name)
+        prompts_root = config_path.parent / "prompts" if config_path is not None else None
+        answer = run_prompt(config, prompt, agent_name, prompts_root=prompts_root)
     except HaruError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(answer)
