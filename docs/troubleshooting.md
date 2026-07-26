@@ -57,10 +57,50 @@ your own IAM policies and CloudTrail, and it is exactly why haru needs a role
 carrying `bedrock:InvokeModel`. The two models are not interchangeable, and
 Kiro's is not available to third-party clients through any supported route.
 
+The sign-in itself is identical — haru runs the same OAuth 2.0
+authorization-code + PKCE flow against Identity Center that Kiro and `aws sso
+login` use. **The divergence is authorization, not authentication.** Signing in
+has always worked; the gap is the IAM grant to reach Bedrock afterward.
+
+#### Can't the subscription authorize haru instead of an IAM role?
+
+No — and it is worth being precise about why, because every documented path was
+checked. The root cause is that **Amazon Q Developer is a subscription product
+while Amazon Bedrock is a metered API**: Bedrock has no subscription or
+entitlement concept, so every call is authorized against an IAM principal and
+billed per token. There is no setting that makes it behave like a subscription.
+
+- **Calling Amazon Q from haru** — not possible. AWS states CodeWhisperer/Q
+  *"does not have public APIs … and they are not provided by any SDK"*; the
+  `codewhisperer:*` actions exist only to be named in IAM policies. The
+  subscription entitles you to AWS's own clients, nothing else.
+- **Registering haru as an Identity Center customer managed OAuth 2.0
+  application** — a real feature, but it propagates identity to a fixed set of
+  *trusted applications*, and Amazon Q Developer is not among them. A
+  self-registered client also cannot request Q's managed-application scopes.
+- **[Trusted identity propagation](https://docs.aws.amazon.com/singlesignon/latest/userguide/trustedidentitypropagation-overview.html)**
+  — its receiving services are Athena, EMR, Lake Formation, Redshift, S3 Access
+  Grants, QuickSight, and Amazon Q *Business*. **Bedrock is not on the list**,
+  and where TIP works it still yields an identity-enhanced *IAM role* session —
+  the role is enriched, not removed.
+- **[Bedrock API keys](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html)**
+  (`AWS_BEARER_TOKEN_BEDROCK`) — a change of authentication transport, not
+  authorization. Short-term keys *"inherit permissions from the IAM principal
+  used to generate it"* and additionally require `bedrock:CallWithBearerToken`;
+  generating one needs already-working Bedrock credentials, so it is circular.
+
+Every route into Bedrock terminates at an IAM principal holding
+`bedrock:InvokeModel`. The permission set below is not one option among several
+— it is the only one, and it is a *smaller* ask than any alternative above.
+
 > Third-party "gateway" projects that proxy Kiro credentials to that managed
 > endpoint are out of bounds here: they drive a private, undocumented API
 > through an unapproved client. In a regulated environment that is a
 > compliance problem, not a workaround.
+
+Run `haru doctor --all-roles --admin-request` to generate a complete, pasteable
+Bedrock access request — the probe evidence, the exact policy, your configured
+models, and the Kiro explanation — to send your AWS administrator.
 
 Consequently an Amazon Q permission set (names like `AmazonQUsers`) is
 **expected to fail** with haru. Run `haru doctor --all-roles` to find which of

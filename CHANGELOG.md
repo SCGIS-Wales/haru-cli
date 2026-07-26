@@ -7,8 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `haru run` and `haru chat` no longer fail on every invocation with
+  `ValueError: Cannot specify both region_name and boto_session`. `build_model`
+  passed both to Strands' `BedrockModel`, which rejects the combination; the
+  model's region now rides on the boto3 session instead. This was masked
+  because authentication fails first, and because the tests mocked the
+  constructor rather than building it — a real-construction regression test now
+  guards it against the unpinned `strands-agents` lower bound.
+
 ### Added
 
+- `haru doctor --all-roles --admin-request`: emits a complete, pasteable
+  Amazon Bedrock access request for an AWS administrator - the probe evidence
+  that no assigned role works, the exact least-privilege policy (including the
+  per-routed-region foundation-model ARNs that cross-region inference profiles
+  require), the configured models, and why an Amazon Q subscription cannot
+  authorize haru. The plain denied verdict now points at it.
 - `haru doctor`: diagnoses configuration, SSO token, identity provenance,
   role credentials, caller identity, region divergence, Bedrock reachability,
   inference-profile availability, and guardrail sanity, with per-check

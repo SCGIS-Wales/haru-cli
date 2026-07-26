@@ -2,12 +2,14 @@
 
 from typing import Any
 
+import boto3
 import pytest
 from pydantic import ValidationError
 
 from haru.config.schema import HaruConfig, ModelConfig, SamplingConfig
 from haru.errors import ConfigError
 from haru.models.bedrock import (
+    _session_in_region,
     build_model,
     get_model_config,
     list_models,
@@ -50,6 +52,13 @@ def make_model_config(**overrides: Any) -> ModelConfig:
     return ModelConfig.model_validate(values)
 
 
+def mock_session(mocker: Any, region: str = "us-east-1") -> Any:
+    """A mock boto3 session whose region matches the model, so no re-pin runs."""
+    session = mocker.Mock()
+    session.region_name = region
+    return session
+
+
 @pytest.mark.parametrize(
     ("configured", "expected"),
     [
@@ -70,28 +79,32 @@ def test_resolve_model_id_residency(configured: str, expected: str) -> None:
 
 
 def test_build_model_kwargs(mocker: Any) -> None:
-    """build_model constructs BedrockModel with the configured values."""
+    """build_model constructs BedrockModel with the configured values.
+
+    ``region_name`` is deliberately absent: BedrockModel rejects it alongside
+    ``boto_session``, so the region rides on the session instead.
+    """
     bedrock_model = mocker.patch("strands.models.BedrockModel")
-    session = mocker.Mock()
+    session = mock_session(mocker)
 
     build_model(make_model_config(), session)
 
     bedrock_model.assert_called_once_with(
         boto_session=session,
-        region_name="us-east-1",
         model_id="us.anthropic.claude-sonnet-5",
         max_tokens=4096,
         streaming=True,
         strict_tools=False,
         temperature=0.3,
     )
+    assert "region_name" not in bedrock_model.call_args.kwargs
 
 
 def test_build_model_omits_unset_sampling(mocker: Any) -> None:
     """No sampling fields set means none are sent (Claude 5-series safe)."""
     bedrock_model = mocker.patch("strands.models.BedrockModel")
 
-    build_model(make_model_config(temperature=None), mocker.Mock())
+    build_model(make_model_config(temperature=None), mock_session(mocker))
 
     kwargs = bedrock_model.call_args.kwargs
     for key in ("temperature", "top_p", "additional_request_fields"):
@@ -102,7 +115,9 @@ def test_build_model_top_k_and_seed_via_request_fields(mocker: Any) -> None:
     """top_k and seed travel via Converse additionalModelRequestFields."""
     bedrock_model = mocker.patch("strands.models.BedrockModel")
 
-    build_model(make_model_config(temperature=0.2, top_p=0.9, top_k=50, seed=42), mocker.Mock())
+    build_model(
+        make_model_config(temperature=0.2, top_p=0.9, top_k=50, seed=42), mock_session(mocker)
+    )
 
     kwargs = bedrock_model.call_args.kwargs
     assert kwargs["temperature"] == 0.2
@@ -115,7 +130,9 @@ def test_sampling_override_beats_model_entry(mocker: Any) -> None:
     bedrock_model = mocker.patch("strands.models.BedrockModel")
     override = SamplingConfig(temperature=0.0, top_k=1)
 
-    build_model(make_model_config(temperature=0.7, top_p=0.9), mocker.Mock(), sampling=override)
+    build_model(
+        make_model_config(temperature=0.7, top_p=0.9), mock_session(mocker), sampling=override
+    )
 
     kwargs = bedrock_model.call_args.kwargs
     assert kwargs["temperature"] == 0.0
@@ -153,11 +170,11 @@ def test_sampling_config_bounds() -> None:
 def test_build_model_streaming_defaults_on(mocker: Any) -> None:
     """Streaming is on unless the entry disables it explicitly."""
     bedrock_model = mocker.patch("strands.models.BedrockModel")
-    build_model(make_model_config(), mocker.Mock())
+    build_model(make_model_config(), mock_session(mocker))
     assert bedrock_model.call_args.kwargs["streaming"] is True
 
     bedrock_model.reset_mock()
-    build_model(make_model_config(streaming=False), mocker.Mock())
+    build_model(make_model_config(streaming=False), mock_session(mocker))
     assert bedrock_model.call_args.kwargs["streaming"] is False
 
 
@@ -175,8 +192,51 @@ def test_build_model_for_every_configured_entry(mocker: Any) -> None:
     )
     assert config.models is not None
     for entry in config.models.models.values():
-        build_model(entry, mocker.Mock())
+        build_model(entry, mock_session(mocker, entry.region))
     assert bedrock_model.call_count == 2
+
+
+def _dummy_session(region: str) -> Any:
+    """A real boto3 session with dummy credentials (no network on construction)."""
+    return boto3.Session(
+        aws_access_key_id="AKIAEXAMPLE",
+        aws_secret_access_key="secret",
+        aws_session_token="token",
+        region_name=region,
+    )
+
+
+def test_build_model_constructs_a_real_bedrock_model() -> None:
+    """A real BedrockModel builds without the region_name/boto_session clash.
+
+    This is the regression guard for the actual bug: build_model previously
+    passed both boto_session and region_name, which BedrockModel rejects with
+    ValueError. The mocked tests above cannot catch it because they never
+    construct the class. strands-agents is pinned only by a lower bound, so a
+    minor upgrade re-breaking the constructor must fail loudly here.
+    """
+    model = build_model(make_model_config(region="us-east-1"), _dummy_session("us-east-1"))
+
+    assert model.get_config()["model_id"] == "us.anthropic.claude-sonnet-5"
+    assert model.client.meta.region_name == "us-east-1"
+
+
+def test_build_model_repins_a_divergent_model_region() -> None:
+    """When the model's region differs from the session, the model region wins."""
+    session = _dummy_session("us-east-1")
+
+    model = build_model(make_model_config(region="eu-west-1"), session)
+
+    assert model.client.meta.region_name == "eu-west-1"
+    # Credentials survive the re-pin.
+    credentials = model.client._request_signer._credentials
+    assert credentials.access_key == "AKIAEXAMPLE"
+
+
+def test_session_in_region_reuses_a_matching_session() -> None:
+    """No new session is built when the region already matches."""
+    session = _dummy_session("us-east-1")
+    assert _session_in_region(session, "us-east-1") is session
 
 
 def test_get_model_config_default_and_named() -> None:

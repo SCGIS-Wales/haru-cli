@@ -55,9 +55,10 @@ def build_model(
     """
     from strands.models import BedrockModel
 
+    # BedrockModel rejects boto_session together with region_name, so the
+    # session must already carry the model's region.
     return BedrockModel(
-        boto_session=session,
-        region_name=model_cfg.region,
+        boto_session=_session_in_region(session, model_cfg.region),
         model_id=resolve_model_id(model_cfg.model_id),
         max_tokens=model_cfg.max_tokens,
         streaming=model_cfg.streaming,
@@ -65,6 +66,27 @@ def build_model(
         strict_tools=False,
         **_sampling_kwargs(effective_sampling(model_cfg, sampling)),
         **apply_guardrail(model_cfg, guardrails),
+    )
+
+
+def _session_in_region(session: boto3.Session, region: str) -> boto3.Session:
+    """Return a session pinned to ``region``, reusing the same credentials.
+
+    ``BedrockModel`` rejects ``boto_session`` together with ``region_name``,
+    and a session's region is fixed at construction. The session handed in
+    carries ``auth.bedrock_region``, which may differ from the model entry's
+    region; the model's region wins, so a divergent one needs a re-pinned copy.
+    """
+    import boto3
+
+    if session.region_name == region:
+        return session
+    frozen = session.get_credentials().get_frozen_credentials()
+    return boto3.Session(
+        aws_access_key_id=frozen.access_key,
+        aws_secret_access_key=frozen.secret_key,
+        aws_session_token=frozen.token,
+        region_name=region,
     )
 
 
