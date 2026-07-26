@@ -8,8 +8,10 @@ auth:
     registration_scopes:
       - sso:account:access
     client_name: haru-cli
-    account_id_env: HARU_AWS_ACCOUNT_ID
-    role_name: __ROLE_NAME__
+    # Optional pins. When unset, your AWS account and role are discovered
+    # during 'haru login' (browser sign-in) and remembered.
+    # account_id: "123456789012"
+    # role_name: BedrockAccess
     callback_port: 0            # 0 selects an ephemeral loopback port
     browser: true
   bedrock_region: __BEDROCK_REGION__

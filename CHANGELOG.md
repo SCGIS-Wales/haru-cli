@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Browser-only login: `haru login` now discovers your accessible AWS
+  accounts and permission-set roles from Identity Center after sign-in
+  (auto-selected when unambiguous, prompted otherwise) and remembers the
+  choice — no IAM role name or account id env var needed upfront.
+  `auth.sso.account_id`/`role_name` remain available as optional pins.
+
+### Changed
+
+- `haru config init` no longer asks for an IAM role name; the
+  `HARU_AWS_ACCOUNT_ID` step is gone from the quickstart.
+
+### Added
+
 - Sampling controls (`temperature`, `top_p`, `top_k`, `seed`) across three
   surfaces: model entries, per-agent `sampling:` blocks, and CLI/REPL
   overrides (`--temperature/--top-p/--top-k/--seed`, `/sampling`).

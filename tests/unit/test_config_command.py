@@ -17,8 +17,6 @@ INIT_ARGS = [
     "us-east-1",
     "--bedrock-region",
     "eu-west-1",
-    "--role-name",
-    "HaruBedrockInvoke",
 ]
 
 

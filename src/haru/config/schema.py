@@ -24,14 +24,20 @@ class AppConfig(_FrozenModel):
 
 
 class SsoConfig(_FrozenModel):
-    """IAM Identity Center (SSO) login settings."""
+    """IAM Identity Center (SSO) login settings.
+
+    ``account_id`` and ``role_name`` are optional: when unset, the account
+    and permission-set role are discovered interactively during
+    ``haru login`` (browser-only sign-in, like the AWS CLI's SSO flow).
+    """
 
     start_url: str
     sso_region: str
     registration_scopes: tuple[str, ...] = ("sso:account:access",)
     client_name: str = "haru-cli"
-    account_id_env: str
-    role_name: str
+    account_id: str | None = None
+    account_id_env: str | None = None
+    role_name: str | None = None
     callback_port: int = Field(default=0, ge=0, le=65535)
     browser: bool = True
 
