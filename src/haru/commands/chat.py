@@ -7,31 +7,37 @@ models and agents mid-session.
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
+from pydantic import ValidationError
 from rich.console import Console
 
 from haru.agents.factory import build_agent
 from haru.auth.session import build_boto3_session
 from haru.commands.streaming import collect_response, surface_guardrail
 from haru.config import load_config, resolve_config_path
-from haru.config.schema import HaruConfig
-from haru.errors import HaruError
+from haru.config.schema import HaruConfig, SamplingConfig
+from haru.errors import ConfigError, HaruError
+from haru.models.bedrock import effective_sampling, get_model_config, sampling_overrides
 from haru.observability.telemetry import configure_telemetry
 from haru.sessions.manager import build_session_manager
 from haru.tools.mcp import started_mcp_clients
 
 _EXIT_WORDS = frozenset({"exit", "quit"})
+_SAMPLING_FIELDS = ("temperature", "top_p", "top_k", "seed")
 
 _HELP_TEXT = """\
 Commands:
-  /help            Show this help
-  /model           List configured models
-  /model <name>    Switch the default agent to <name> (resets the conversation)
-  /agent           List configured agents
-  /agent <name>    Switch to agent <name> (resets the conversation)
-  exit | quit      Leave the chat (also /exit, /quit, Ctrl-D)"""
+  /help                    Show this help
+  /model                   List configured models
+  /model <name>            Switch the default agent to <name> (resets the conversation)
+  /agent                   List configured agents
+  /agent <name>            Switch to agent <name> (resets the conversation)
+  /sampling                Show effective sampling for the active target
+  /sampling k=v [k=v ...]  Override temperature/top_p/top_k/seed (resets the conversation)
+  /sampling reset          Clear sampling overrides (resets the conversation)
+  exit | quit              Leave the chat (also /exit, /quit, Ctrl-D)"""
 
 
 def run_chat(  # noqa: PLR0913 - keyword-only wiring points, all optional
@@ -42,6 +48,7 @@ def run_chat(  # noqa: PLR0913 - keyword-only wiring points, all optional
     read_input: Callable[[str], str] = input,
     prompts_root: Path | None = None,
     session_id: str | None = None,
+    sampling: SamplingConfig | None = None,
 ) -> None:
     """Run the interactive chat loop until the user exits."""
     session = build_boto3_session(config.auth)
@@ -51,7 +58,11 @@ def run_chat(  # noqa: PLR0913 - keyword-only wiring points, all optional
         else None
     )
     with started_mcp_clients(config.mcp) as mcp_clients:
-        state: dict[str, Any] = {"agent_name": agent_name, "model_name": None}
+        state: dict[str, Any] = {
+            "agent_name": agent_name,
+            "model_name": None,
+            "sampling": sampling,
+        }
 
         def make_agent(name: str | None, model: str | None) -> Any:
             return build_agent(
@@ -62,6 +73,7 @@ def run_chat(  # noqa: PLR0913 - keyword-only wiring points, all optional
                 mcp_clients=mcp_clients,
                 session_manager=session_manager,
                 model_name=model,
+                sampling=state["sampling"],
             )
 
         state["agent"] = make_agent(agent_name, None)
@@ -121,9 +133,90 @@ def _handle_slash(
             _print_agents(config, console, state)
         else:
             _switch(state, console, make_agent, agent_name=argument, model_name=None)
+    elif name == "sampling":
+        if argument is None:
+            _print_sampling(config, console, state)
+        else:
+            _apply_sampling(argument, config, console, state, make_agent)
     else:
         console.print(f"Unknown command /{command}; type /help for commands.")
     return True
+
+
+def _parse_sampling(argument: str) -> SamplingConfig:
+    """Parse ``key=value`` sampling tokens into a SamplingConfig."""
+    values: dict[str, str] = {}
+    for token in argument.split():
+        key, separator, raw_value = token.partition("=")
+        if not separator or key not in _SAMPLING_FIELDS or not raw_value:
+            fields = ", ".join(_SAMPLING_FIELDS)
+            raise ConfigError(f"Bad sampling token {token!r}; use key=value with keys: {fields}")
+        values[key] = raw_value
+    try:
+        return SamplingConfig.model_validate(values)
+    except ValidationError as exc:
+        raise ConfigError(f"Invalid sampling values: {exc}") from exc
+
+
+def _apply_sampling(
+    argument: str,
+    config: HaruConfig,
+    console: Console,
+    state: dict[str, Any],
+    make_agent: Callable[[str | None, str | None], Any],
+) -> None:
+    """Apply or clear sampling overrides, keeping the old state on failure."""
+    if argument.lower() == "reset":
+        override: SamplingConfig | None = None
+    else:
+        try:
+            override = _parse_sampling(argument)
+        except ConfigError as exc:
+            console.print(f"[red]{exc}[/]")
+            return
+    previous = state["sampling"]
+    state["sampling"] = override
+    try:
+        agent = make_agent(state["agent_name"], state["model_name"])
+    except HaruError as exc:
+        state["sampling"] = previous
+        console.print(f"[red]{exc}[/]")
+        return
+    state["agent"] = agent
+    if override is None:
+        console.print("Sampling overrides cleared (conversation reset).")
+    else:
+        console.print("Sampling overrides applied (conversation reset).")
+    _print_sampling(config, console, state)
+
+
+def _print_sampling(config: HaruConfig, console: Console, state: dict[str, Any]) -> None:
+    """Show model defaults, session overrides, and effective sampling values."""
+    agent_name = state["agent_name"]
+    model_key = state["model_name"]
+    if agent_name is not None and config.agents is not None:
+        agent_cfg = config.agents.agents.get(agent_name)
+        model_key = agent_cfg.model if agent_cfg is not None else model_key
+    try:
+        model_cfg = get_model_config(config, model_key)
+    except HaruError as exc:
+        console.print(f"[red]{exc}[/]")
+        return
+    override = cast(SamplingConfig | None, state["sampling"])
+    effective = effective_sampling(model_cfg, override)
+    console.print(f"Sampling for model {model_cfg.model_id!r} (unset = provider default):")
+    for field in _SAMPLING_FIELDS:
+        model_value = getattr(model_cfg, field)
+        override_value = getattr(override, field) if override is not None else None
+        effective_value = getattr(effective, field)
+        console.print(
+            f"  {field:<12} model={_fmt(model_value):<8}"
+            f" override={_fmt(override_value):<8} effective={_fmt(effective_value)}"
+        )
+
+
+def _fmt(value: Any) -> str:
+    return "-" if value is None else str(value)
 
 
 def _switch(
@@ -190,7 +283,19 @@ def _print_agents(config: HaruConfig, console: Console, state: dict[str, Any]) -
     default=None,
     help="Persist and restore this conversation under the given session id.",
 )
-def chat(config_path: Path | None, agent_name: str | None, session_id: str | None) -> None:
+@click.option("--temperature", type=float, default=None, help="Sampling temperature (0-1).")
+@click.option("--top-p", "top_p", type=float, default=None, help="Nucleus sampling (0-1).")
+@click.option("--top-k", "top_k", type=int, default=None, help="Top-k sampling (>=1).")
+@click.option("--seed", type=int, default=None, help="Seed (models that support it only).")
+def chat(  # noqa: PLR0913, PLR0917 - one option per flag; Click passes positionally
+    config_path: Path | None,
+    agent_name: str | None,
+    session_id: str | None,
+    temperature: float | None,
+    top_p: float | None,
+    top_k: int | None,
+    seed: int | None,
+) -> None:
     """Chat interactively with a Bedrock agent (streaming)."""
     console = Console()
     try:
@@ -203,6 +308,9 @@ def chat(config_path: Path | None, agent_name: str | None, session_id: str | Non
             console=console,
             prompts_root=resolved.parent / "prompts",
             session_id=session_id,
+            sampling=sampling_overrides(
+                temperature=temperature, top_p=top_p, top_k=top_k, seed=seed
+            ),
         )
     except HaruError as exc:
         raise click.ClickException(str(exc)) from exc

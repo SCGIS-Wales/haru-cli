@@ -68,12 +68,43 @@ caching tokens in the botocore-compatible schema under `~/.aws/sso/cache`
 tokens are refreshed automatically; when a fresh login is needed, commands say
 so plainly.
 
+## Sampling controls
+
+haru-cli exposes `temperature`, `top_p`, `top_k`, and `seed` on **three
+configuration surfaces** — a capability Kiro CLI does not offer on any of its
+configuration surfaces (its v2/v3 agent formats and `cli.json` define no
+sampling fields):
+
+| Surface                  | Where                                          | Example                                   |
+| ------------------------ | ---------------------------------------------- | ----------------------------------------- |
+| Model catalogue          | `models.yaml`, per model entry                 | `temperature: 0.2`, `top_k: 50`           |
+| Agent profile            | `agents.yaml`, per agent `sampling:` block     | `sampling: {temperature: 0.1}`            |
+| CLI / REPL               | `--temperature/--top-p/--top-k/--seed` flags on `run` and `chat`; `/sampling` in the REPL | `haru run "..." --top-k 20` |
+
+Precedence: **CLI/REPL override → agent `sampling:` block → model entry**,
+merged per-field. Unset fields are omitted from requests entirely, keeping
+the provider's defaults. In the chat REPL, `/sampling` shows the model
+default, session override, and effective value for each field;
+`/sampling temperature=0.2 top_k=50` applies overrides and `/sampling reset`
+clears them.
+
+Model compatibility (AWS-side behaviour, not a haru limitation):
+
+- **Claude 5-series and Opus 4.7+** (Sonnet 5, Opus 5, Opus 4.8) reject
+  non-default `temperature`/`top_p`/`top_k` with an HTTP 400 — leave them
+  unset on those entries (the shipped config does).
+- **Claude Haiku 4.5, Sonnet 4.5, and older Claude models**, plus
+  non-Anthropic Bedrock models, accept them.
+- `seed` is forwarded via Converse `additionalModelRequestFields` for Bedrock
+  models that support it; **no Claude model accepts a seed today**, so do not
+  expect determinism from Claude — the field exists for models that honour it.
+
 ## Configuration
 
 Declarative YAML under `config/` — models, agents, orchestration
-(supervisor/swarm/graph), MCP servers, guardrails, sessions, logging, and
-OpenTelemetry. No secrets in YAML: values reference environment variables with
-`${env:VAR}`. See [docs/configuration.md](docs/configuration.md).
+(supervisor/swarm/graph), MCP servers, guardrails, sessions, sampling,
+logging, and OpenTelemetry. No secrets in YAML: values reference environment
+variables with `${env:VAR}`. See [docs/configuration.md](docs/configuration.md).
 
 ## Development
 

@@ -15,9 +15,9 @@ from strands.models import BedrockModel
 from strands.session.session_manager import SessionManager
 from strands.tools.mcp import MCPClient
 
-from haru.config.schema import HaruConfig
+from haru.config.schema import HaruConfig, SamplingConfig
 from haru.errors import ConfigError
-from haru.models.bedrock import build_model, get_model_config
+from haru.models.bedrock import build_model, get_model_config, merge_sampling
 from haru.steering.prompts import DEFAULT_PROMPTS_ROOT, load_prompts, resolve_prompt
 from haru.tools.mcp import collect_tools
 
@@ -31,16 +31,19 @@ def build_agent(  # noqa: PLR0913 - keyword-only wiring points, all optional
     mcp_clients: Mapping[str, MCPClient] | None = None,
     session_manager: SessionManager | None = None,
     model_name: str | None = None,
+    sampling: SamplingConfig | None = None,
 ) -> Agent:
     """Build the named agent from configuration (default model when unnamed).
 
     ``model_name`` overrides the model for the default (unnamed) agent only;
-    named agents pin their own model. Raises ConfigError for unknown agents,
-    prompt references, tools, or an invalid override.
+    named agents pin their own model. ``sampling`` overrides sampling fields
+    (precedence: this override, then the agent's ``sampling`` block, then the
+    model entry). Raises ConfigError for unknown agents, prompt references,
+    tools, or an invalid override.
     """
     if agent_name is None:
         model_cfg = get_model_config(config, model_name)
-        model = build_model(model_cfg, session, guardrails=config.guardrails)
+        model = build_model(model_cfg, session, guardrails=config.guardrails, sampling=sampling)
         return Agent(model=model, session_manager=session_manager)
     if model_name is not None:
         raise ConfigError(
@@ -48,7 +51,12 @@ def build_agent(  # noqa: PLR0913 - keyword-only wiring points, all optional
             " to the default agent only"
         )
     model, system_prompt, tools = resolve_agent_parts(
-        config, agent_name, session, prompts_root=prompts_root, mcp_clients=mcp_clients
+        config,
+        agent_name,
+        session,
+        prompts_root=prompts_root,
+        mcp_clients=mcp_clients,
+        sampling=sampling,
     )
     return Agent(
         model=model,
@@ -59,13 +67,14 @@ def build_agent(  # noqa: PLR0913 - keyword-only wiring points, all optional
     )
 
 
-def resolve_agent_parts(
+def resolve_agent_parts(  # noqa: PLR0913 - keyword-only wiring points, all optional
     config: HaruConfig,
     agent_name: str,
     session: boto3.Session,
     *,
     prompts_root: Path | None = None,
     mcp_clients: Mapping[str, MCPClient] | None = None,
+    sampling: SamplingConfig | None = None,
 ) -> tuple[BedrockModel, str | None, list[Any]]:
     """Resolve an agent's model, steering prompt, and tool list from config."""
     if config.agents is None or agent_name not in config.agents.agents:
@@ -73,7 +82,10 @@ def resolve_agent_parts(
         raise ConfigError(f"Unknown agent {agent_name!r}; configured agents: {available}")
     agent_cfg = config.agents.agents[agent_name]
     model = build_model(
-        get_model_config(config, agent_cfg.model), session, guardrails=config.guardrails
+        get_model_config(config, agent_cfg.model),
+        session,
+        guardrails=config.guardrails,
+        sampling=merge_sampling(agent_cfg.sampling, sampling),
     )
 
     system_prompt: str | None = None

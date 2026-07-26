@@ -1,20 +1,31 @@
+# Sampling fields (temperature, top_p, top_k, seed) are optional; unset
+# fields are omitted from requests, keeping the provider's defaults.
+# Claude 5-series and Opus 4.7+ models reject non-default temperature/top_p/
+# top_k with an HTTP 400, so leave them unset on those entries. seed is
+# passed through to models that support it (no Claude model does today).
 default_model: sonnet-5
 models:
   opus-5:
     model_id: us.anthropic.claude-opus-5
     region: us-east-1
     max_tokens: 8192
-    temperature: 0.3
     streaming: true
   sonnet-5:
     model_id: us.anthropic.claude-sonnet-5
     region: us-east-1
     max_tokens: 8192
-    temperature: 0.3
     streaming: true
   opus-4-8:
     model_id: us.anthropic.claude-opus-4-8
     region: us-east-1
     max_tokens: 8192
+    streaming: true
+  # Haiku 4.5 accepts sampling parameters:
+  haiku-4-5:
+    model_id: us.anthropic.claude-haiku-4-5
+    region: us-east-1
+    max_tokens: 4096
     temperature: 0.2
+    top_p: 0.9
+    top_k: 50
     streaming: true
