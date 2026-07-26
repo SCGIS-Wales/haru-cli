@@ -19,3 +19,7 @@ class AuthError(HaruError):
 
 class AuthExpiredError(AuthError):
     """Raised when cached credentials are missing or expired; re-login is required."""
+
+
+class ToolError(HaruError):
+    """Raised when a tool or MCP server cannot be constructed or listed."""
