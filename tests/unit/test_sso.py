@@ -151,6 +151,21 @@ def _get(url: str) -> None:
         pass
 
 
+class _Capture:
+    """Fetch a URL from a thread, capturing body, headers, and status."""
+
+    def __init__(self) -> None:
+        self.body = ""
+        self.headers: dict[str, str] = {}
+        self.status = 0
+
+    def fetch(self, url: str) -> None:
+        with urllib.request.urlopen(url) as response:  # noqa: S310 - loopback URL
+            self.status = response.status
+            self.headers = {key.lower(): value for key, value in response.headers.items()}
+            self.body = response.read().decode("utf-8")
+
+
 def test_loopback_callback_roundtrip() -> None:
     """The loopback server captures code and state from a real local request."""
     server = _start_loopback_server(0)
@@ -194,7 +209,7 @@ def test_callback_ignores_other_paths() -> None:
 
         def _hit_wrong_then_right() -> None:
             with contextlib.suppress(urllib.error.HTTPError):
-                _get(f"http://127.0.0.1:{port}/favicon.ico")
+                _get(f"http://127.0.0.1:{port}/wrong-path")
             _get(f"http://127.0.0.1:{port}/oauth/callback?code=abc&state=xyz")
 
         thread = threading.Thread(target=_hit_wrong_then_right)
@@ -204,6 +219,110 @@ def test_callback_ignores_other_paths() -> None:
     finally:
         server.server_close()
     assert (code, state) == ("abc", "xyz")
+
+
+def _serve_one(url: str, server: Any) -> _Capture:
+    """Serve exactly one request to ``url``, returning the captured response."""
+    capture = _Capture()
+    thread = threading.Thread(target=capture.fetch, args=(url,))
+    thread.start()
+    server.timeout = 10.0
+    server.handle_request()
+    thread.join(timeout=10.0)
+    return capture
+
+
+def test_success_page_content_and_security_headers() -> None:
+    """A valid callback renders the success page with strict browser headers."""
+    server = _start_loopback_server(0)
+    try:
+        server.expected_state = "xyz"
+        port = server.server_address[1]
+        capture = _serve_one(f"http://127.0.0.1:{port}/oauth/callback?code=abc&state=xyz", server)
+    finally:
+        server.server_close()
+
+    assert capture.status == 200
+    assert "Request approved" in capture.body
+    assert "start using haru CLI" in capture.body
+    assert capture.headers["content-type"] == "text/html; charset=utf-8"
+    assert capture.headers["content-length"] == str(len(capture.body.encode("utf-8")))
+    csp = capture.headers["content-security-policy"]
+    assert "default-src 'none'" in csp
+    assert "frame-ancestors 'none'" in csp
+    assert capture.headers["x-content-type-options"] == "nosniff"
+    assert capture.headers["x-frame-options"] == "DENY"
+    assert capture.headers["referrer-policy"] == "no-referrer"
+    assert capture.headers["cache-control"] == "no-store"
+    assert "<script" not in capture.body
+    assert "src=" not in capture.body
+    assert "href=" not in capture.body
+
+
+def test_denied_callback_renders_failure_page() -> None:
+    """An error callback shows the failure page, and the CLI still errors."""
+    server = _start_loopback_server(0)
+    try:
+        port = server.server_address[1]
+        url = (
+            f"http://127.0.0.1:{port}/oauth/callback"
+            "?error=access_denied&error_description=User+denied"
+        )
+        capture = _serve_one(url, server)
+        with pytest.raises(AuthError, match="access_denied"):
+            _await_callback(server, timeout_seconds=1.0)
+    finally:
+        server.server_close()
+
+    assert "Request denied" in capture.body
+    assert "access_denied" in capture.body
+    assert "Request approved" not in capture.body
+
+
+def test_forged_state_renders_failure_page() -> None:
+    """A state mismatch shows the failure page in the browser."""
+    server = _start_loopback_server(0)
+    try:
+        server.expected_state = "expected"
+        port = server.server_address[1]
+        capture = _serve_one(
+            f"http://127.0.0.1:{port}/oauth/callback?code=abc&state=forged", server
+        )
+    finally:
+        server.server_close()
+
+    assert "Request denied" in capture.body
+    assert "security check" in capture.body
+
+
+def test_error_description_is_escaped() -> None:
+    """HTML in the error description cannot inject markup into the page."""
+    server = _start_loopback_server(0)
+    try:
+        port = server.server_address[1]
+        url = (
+            f"http://127.0.0.1:{port}/oauth/callback"
+            "?error=access_denied&error_description=%3Cscript%3Ealert(1)%3C/script%3E"
+        )
+        capture = _serve_one(url, server)
+    finally:
+        server.server_close()
+
+    assert "<script" not in capture.body
+    assert "&lt;script&gt;" in capture.body
+
+
+def test_favicon_request_is_quiet() -> None:
+    """Browsers requesting /favicon.ico get an empty 204, not an error page."""
+    server = _start_loopback_server(0)
+    try:
+        port = server.server_address[1]
+        capture = _serve_one(f"http://127.0.0.1:{port}/favicon.ico", server)
+    finally:
+        server.server_close()
+
+    assert capture.status == 204
+    assert capture.body == ""
 
 
 def test_callback_missing_state() -> None:
