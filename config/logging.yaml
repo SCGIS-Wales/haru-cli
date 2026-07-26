@@ -1,0 +1,10 @@
+logging:
+  level: INFO
+  format: json
+  file: null
+observability:
+  otel:
+    enabled: true
+    endpoint: ${env:OTEL_EXPORTER_OTLP_ENDPOINT}
+    service_name: haru-cli
+    console_export: false

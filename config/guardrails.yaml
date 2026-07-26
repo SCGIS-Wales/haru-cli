@@ -1,0 +1,8 @@
+guardrails:
+  enabled: true
+  guardrail_id: ${env:HARU_GUARDRAIL_ID}
+  guardrail_version: DRAFT
+  trace: enabled
+  redact_input: true
+  redact_input_message: "[redacted]"
+  redact_output: false

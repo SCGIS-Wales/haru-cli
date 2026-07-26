@@ -1,0 +1,13 @@
+mcp_servers:
+  aws-docs:
+    transport: stdio
+    command: uvx
+    args: ["awslabs.aws-documentation-mcp-server@latest"]
+    disabled: false
+    continue_on_error: true
+  internal-api:
+    transport: streamable-http
+    url: https://mcp.internal.example.com/mcp
+    headers:
+      authorization: ${env:HARU_INTERNAL_MCP_TOKEN}
+    disabled: true
