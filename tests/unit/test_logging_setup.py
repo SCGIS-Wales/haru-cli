@@ -10,7 +10,7 @@ import pytest
 
 from haru.auth.sso import _CallbackHandler
 from haru.config.schema import LoggingConfig
-from haru.logging_setup import configure_logging, redact
+from haru.logging_setup import configure_logging, log_aws_call, log_aws_error, redact
 
 
 @pytest.fixture(autouse=True)
@@ -62,13 +62,59 @@ def test_level_honoured_and_debug_overrides() -> None:
 
 
 def test_aws_logger_levels() -> None:
-    """AWS SDK logging stays at WARNING normally and rises to INFO with --debug."""
+    """AWS SDK logging is capped at INFO even under --debug.
+
+    This is a security control, not a formatting choice: botocore logs full
+    request and response headers and bodies at DEBUG. Raising this cap would
+    put credentials and prompt text into the log.
+    """
     configure_logging(None, stream=io.StringIO())
     assert logging.getLogger("botocore").level == logging.WARNING
 
     configure_logging(None, debug=True, stream=io.StringIO())
     assert logging.getLogger("botocore").level == logging.INFO
     assert logging.getLogger("botocore").level != logging.DEBUG
+
+
+def test_log_aws_call_shape() -> None:
+    """An AWS call line names the API and its non-sensitive fields."""
+    stream = io.StringIO()
+    configure_logging(None, debug=True, stream=stream)
+    log_aws_call(logging.getLogger("haru.test"), "sso.GetRoleCredentials", account_id="1", role="R")
+
+    assert "aws sso.GetRoleCredentials account_id=1 role=R" in stream.getvalue()
+
+
+def test_log_aws_call_omits_none_fields() -> None:
+    """Absent fields are dropped rather than logged as None."""
+    stream = io.StringIO()
+    configure_logging(None, debug=True, stream=stream)
+    log_aws_call(logging.getLogger("haru.test"), "sso.ListAccounts", count=3, region=None)
+
+    output = stream.getvalue()
+    assert "count=3" in output
+    assert "region" not in output
+
+
+def test_log_aws_error_logs_code_only() -> None:
+    """A failure line carries the error code and nothing from the response."""
+    stream = io.StringIO()
+    configure_logging(None, debug=True, stream=stream)
+    log_aws_error(logging.getLogger("haru.test"), "bedrock.ListFoundationModels", None)
+    log_aws_error(logging.getLogger("haru.test"), "sts.GetCallerIdentity", "AccessDenied")
+
+    output = stream.getvalue()
+    assert "aws bedrock.ListFoundationModels failed code=unknown" in output
+    assert "aws sts.GetCallerIdentity failed code=AccessDenied" in output
+
+
+def test_aws_call_values_are_redacted() -> None:
+    """Values pass through %s args, so the redaction filter still sees them."""
+    stream = io.StringIO()
+    configure_logging(None, debug=True, stream=stream)
+    log_aws_call(logging.getLogger("haru.test"), "x", blob='{"accessToken": "aoaSECRETvalue"}')
+
+    assert "aoaSECRETvalue" not in stream.getvalue()
 
 
 @pytest.mark.parametrize(

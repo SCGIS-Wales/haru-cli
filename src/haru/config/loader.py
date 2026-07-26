@@ -20,6 +20,7 @@ from haru.config.schema import (
     AgentsConfig,
     GuardrailsFile,
     HaruConfig,
+    LoggingConfig,
     LoggingFile,
     MCPConfig,
     ModelsConfig,
@@ -128,6 +129,25 @@ def load_includes(base: HaruConfig, root: Path) -> HaruConfig:
         updates["logging"] = logging_file.logging
         updates["observability"] = logging_file.observability
     return base.model_copy(update=updates)
+
+
+def load_logging(base: HaruConfig, root: Path) -> LoggingConfig | None:
+    """Load only the logging include; None when absent or invalid.
+
+    Deliberately fail-soft. Commands that load with ``with_includes=False``
+    (``login``, ``session list``) do so because a broken ``models.yaml`` must
+    not block sign-in; honouring ``logging.yaml`` must not reintroduce that
+    coupling.
+    """
+    if base.logging is not None:
+        return base.logging
+    if base.includes is None or base.includes.logging is None:
+        return None
+    source = root / base.includes.logging
+    try:
+        return _validate(LoggingFile, _load_yaml(source), source).logging
+    except ConfigError:
+        return None
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

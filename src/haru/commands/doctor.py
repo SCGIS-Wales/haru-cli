@@ -8,7 +8,7 @@ from typing import Any
 
 import click
 
-from haru.config import load_config, resolve_config_path
+from haru.commands._common import load_cli_config
 from haru.errors import HaruError
 
 _MARK = {"pass": "PASS", "fail": "FAIL", "warn": "WARN", "skip": "SKIP"}
@@ -51,8 +51,7 @@ def doctor(  # noqa: PLR0913, PLR0917 - one option per flag; Click passes positi
     from haru.diagnostics.matrix import probe_roles
 
     try:
-        resolved = resolve_config_path(config_path)
-        config = load_config(resolved)
+        resolved, config = load_cli_config(config_path)
     except HaruError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -68,7 +67,7 @@ def doctor(  # noqa: PLR0913, PLR0917 - one option per flag; Click passes positi
             )
         except HaruError as exc:
             raise click.ClickException(str(exc)) from exc
-        _report_matrix(probes, as_json=as_json)
+        _report_matrix(probes, invoke=invoke, as_json=as_json)
         return
 
     try:
@@ -113,8 +112,12 @@ def _report_checks(results: list[Any], *, as_json: bool) -> None:
         click.echo("Run 'haru doctor --all-roles' to find an account and role that works.")
 
 
-def _report_matrix(probes: list[Any], *, as_json: bool) -> None:
-    """Print the account/role probe matrix and a verdict."""
+def _report_matrix(probes: list[Any], *, invoke: bool, as_json: bool) -> None:
+    """Print the account/role probe matrix and a verdict.
+
+    ``invoke`` says whether a real Bedrock call was made. Without it only the
+    control plane was tested, and the verdict must not claim more than that.
+    """
     if as_json:
         click.echo(
             json_module.dumps(
@@ -128,6 +131,7 @@ def _report_matrix(probes: list[Any], *, as_json: bool) -> None:
                         "invoke": probe.invoke,
                         "detail": probe.detail,
                         "usable": probe.usable,
+                        "proven": probe.proven,
                     }
                     for probe in probes
                 ],
@@ -153,9 +157,25 @@ def _report_matrix(probes: list[Any], *, as_json: bool) -> None:
             " re-run 'haru login' and choose it, or pin it with auth.sso.account_id"
             " and auth.sso.role_name."
         )
+        if not best.proven:
+            click.echo(
+                "That is based on ListFoundationModels alone, which is indicative"
+                " rather than proof. Re-run with --invoke to confirm the role can"
+                " actually invoke a model."
+            )
+        return
+    if invoke:
+        click.echo(
+            "No assigned role could reach Bedrock. None of your permission sets grant"
+            " bedrock:InvokeModel / bedrock:InvokeModelWithResponseStream."
+            " Ask your AWS admin for a Bedrock permission set - see docs/troubleshooting.md."
+        )
         return
     click.echo(
-        "No assigned role could reach Bedrock. None of your permission sets grant"
-        " bedrock:InvokeModel / bedrock:InvokeModelWithResponseStream."
-        " Ask your AWS admin for a Bedrock permission set - see docs/troubleshooting.md."
+        "No assigned role could list Bedrock models (bedrock:ListFoundationModels).\n"
+        "That is the control plane only. A role granted bedrock:InvokeModel on a\n"
+        "specific model ARN without ListFoundationModels - a common least-privilege\n"
+        "setup - looks identical here.\n"
+        "Re-run 'haru doctor --all-roles --invoke' for a definitive answer"
+        " (one minimal billable Bedrock call per role)."
     )

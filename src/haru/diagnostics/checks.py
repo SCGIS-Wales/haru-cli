@@ -7,6 +7,7 @@ downstream of a failure is reported as skipped rather than raising.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -14,12 +15,20 @@ from pathlib import Path
 from typing import Any, Literal
 
 from haru.auth.cache import cache_path, read_token_cache
-from haru.auth.identity import effective_identity
+from haru.auth.identity import (
+    SOURCE_CONFIG,
+    SOURCE_PIN_REJECTED,
+    effective_identity,
+    read_identity,
+)
 from haru.auth.session import ensure_token, session_for_role
 from haru.config.schema import HaruConfig
 from haru.errors import HaruError
+from haru.logging_setup import log_aws_call, log_aws_error
 from haru.models.bedrock import get_model_config, list_models, resolve_model_id
 from haru.models.errors import INVOKE_ACTIONS
+
+logger = logging.getLogger(__name__)
 
 Status = Literal["pass", "fail", "warn", "skip"]
 
@@ -189,7 +198,27 @@ def check_identity(config: HaruConfig, cache_dir: Path | None) -> CheckResult:
             remediation="Run 'haru login' and choose an account and role.",
         )
     detail = f"account {account_id} ({account_source}), role {role_name} ({role_source})"
-    if "pinned in config" in (account_source, role_source):
+    if SOURCE_PIN_REJECTED in (account_source, role_source):
+        stored = read_identity(config.auth.sso.start_url, cache_dir)
+        stale = ", ".join(
+            f"{key}: {value}"
+            for key, value in (
+                ("auth.sso.account_id", stored and stored.rejected_account_pin),
+                ("auth.sso.role_name", stored and stored.rejected_role_pin),
+            )
+            if value
+        )
+        return CheckResult(
+            "Identity",
+            "warn",
+            detail,
+            remediation=(
+                f"Sign-in proved these pins are not assigned to you: {stale}."
+                " haru is ignoring them and using the identity chosen at login."
+                " Remove them from your configuration to silence this."
+            ),
+        )
+    if SOURCE_CONFIG in (account_source, role_source):
         return CheckResult(
             "Identity",
             "warn",
@@ -204,10 +233,13 @@ def check_identity(config: HaruConfig, cache_dir: Path | None) -> CheckResult:
 
 def check_caller_identity(session: Any) -> CheckResult:
     """Confirm the credentials are live and show the assumed-role ARN."""
+    log_aws_call(logger, "sts.GetCallerIdentity")
     try:
         identity = session.client("sts").get_caller_identity()
     except Exception as exc:
+        log_aws_error(logger, "sts.GetCallerIdentity", _short_code(exc))
         return CheckResult("Caller identity", "fail", _describe(exc))
+    log_aws_call(logger, "sts.GetCallerIdentity", outcome="ok")
     return CheckResult(
         "Caller identity",
         "pass",
@@ -217,9 +249,11 @@ def check_caller_identity(session: Any) -> CheckResult:
 
 def check_bedrock_control_plane(session: Any, region: str) -> CheckResult:
     """List foundation models; indicative of Bedrock access, not proof."""
+    log_aws_call(logger, "bedrock.ListFoundationModels", region=region)
     try:
         response = session.client("bedrock", region_name=region).list_foundation_models()
     except Exception as exc:
+        log_aws_error(logger, "bedrock.ListFoundationModels", _short_code(exc))
         return CheckResult(
             "Bedrock control plane",
             "warn",
@@ -231,6 +265,7 @@ def check_bedrock_control_plane(session: Any, region: str) -> CheckResult:
             iam_actions=("bedrock:ListFoundationModels",),
         )
     count = len(response.get("modelSummaries", []))
+    log_aws_call(logger, "bedrock.ListFoundationModels", outcome="ok", count=count)
     return CheckResult(
         "Bedrock control plane", "pass", f"{count} foundation models visible in {region}."
     )
@@ -246,11 +281,13 @@ def check_inference_profiles(session: Any, config: HaruConfig) -> Iterator[Check
         if model_id.startswith("arn:"):
             yield _skipped(f"Model {name}", "configured as an explicit ARN")
             continue
+        log_aws_call(logger, "bedrock.GetInferenceProfile", profile=model_id, region=entry.region)
         try:
             session.client("bedrock", region_name=entry.region).get_inference_profile(
                 inferenceProfileIdentifier=model_id
             )
         except Exception as exc:
+            log_aws_error(logger, "bedrock.GetInferenceProfile", _short_code(exc))
             yield CheckResult(
                 f"Model {name}",
                 "warn",
@@ -279,6 +316,14 @@ def check_invoke(config: HaruConfig, session: Any) -> CheckResult:
         role_name=role_name,
         guardrail_id=config.guardrails.guardrail_id if config.guardrails else None,
     )
+    # The messages payload is never logged: prompts may carry customer data.
+    log_aws_call(
+        logger,
+        "bedrock-runtime.Converse",
+        model_id=model_id,
+        region=entry.region,
+        max_tokens=1,
+    )
     try:
         session.client("bedrock-runtime", region_name=entry.region).converse(
             modelId=model_id,
@@ -286,6 +331,7 @@ def check_invoke(config: HaruConfig, session: Any) -> CheckResult:
             inferenceConfig={"maxTokens": 1},
         )
     except Exception as exc:
+        log_aws_error(logger, "bedrock-runtime.Converse", _short_code(exc))
         translated = translate_bedrock_error(exc, context)
         return CheckResult(
             "Bedrock invoke (live)",
@@ -294,6 +340,7 @@ def check_invoke(config: HaruConfig, session: Any) -> CheckResult:
             remediation=str(translated) if translated is not None else _describe(exc),
             iam_actions=INVOKE_ACTIONS,
         )
+    log_aws_call(logger, "bedrock-runtime.Converse", outcome="ok")
     return CheckResult(
         "Bedrock invoke (live)", "pass", f"Converse succeeded for {context.describe()}."
     )
@@ -334,3 +381,10 @@ def _describe(exc: Exception) -> str:
 
     code = error_code(exc)
     return f"{code}: {exc}" if code else str(exc)
+
+
+def _short_code(exc: Exception) -> str:
+    """The AWS error code alone, for logs that must not carry a response body."""
+    from haru.models.errors import error_code
+
+    return error_code(exc) or type(exc).__name__

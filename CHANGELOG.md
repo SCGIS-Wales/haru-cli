@@ -18,9 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and prints a matrix of which combinations can actually reach Bedrock -
   answering "which IAM role do I need?" empirically.
 - Global `--debug` flag and real logging: `logging.yaml` (level/format/file)
-  is now honoured instead of being dead config. AWS SDK logging rises to INFO
-  under `--debug` (operations and error codes, never bodies or headers), and a
-  redaction filter masks credential-shaped values.
+  is honoured, and `--debug` prints one line per AWS API call haru makes -
+  the operation, its non-sensitive parameters, and any error code. AWS SDK
+  loggers stay capped at INFO because botocore logs headers and bodies at
+  DEBUG; a redaction filter masks credential-shaped values as defence in
+  depth.
 - `docs/troubleshooting.md`: the IAM policy to hand an AWS administrator,
   including the easily-missed foundation-model ARNs that cross-region
   inference profiles require, and why a Kiro/Amazon Q role will not work.
@@ -35,6 +37,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A configuration pin that sign-in disproves no longer overrides the identity
+  chosen at login. The fallback was previously write-only: `haru login`
+  correctly detected an unassigned `role_name`, warned, and picked a working
+  role, but the very next command re-applied the stale pin. The rejected value
+  is now recorded alongside the identity, so it stops winning until you change
+  or remove it; valid pins are unaffected, and haru never edits your YAML.
+  `haru login` and `haru doctor` both name the offending configuration line.
+- `haru doctor --all-roles` no longer claims more than it tested. Without
+  `--invoke` only `bedrock:ListFoundationModels` is called, so the verdict now
+  says so and points at `--all-roles --invoke`; a role granted
+  `bedrock:InvokeModel` on a single model ARN without `ListFoundationModels`
+  was previously reported as having no Bedrock access at all. The probe matrix
+  also keeps the decisive invoke error in the detail column instead of hiding
+  it behind the earlier control-plane failure, and `--json` gained `proven`.
 - Stale configuration pins no longer produce a broken sign-in: `haru login`
   validates a pinned `role_name`/`account_id` against your actual Identity
   Center assignments, warns, and falls back to the chooser when they do not

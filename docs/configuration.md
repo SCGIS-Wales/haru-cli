@@ -53,11 +53,16 @@ use these fields with models that accept them (for example Haiku 4.5).
 ## Logging
 
 `logging.yaml` is honoured: `level` (DEBUG/INFO/WARNING/ERROR), `format`
-(`json` or `text`), and `file` (a path also writes a 0600 log file). The
-global `--debug` flag overrides the level and additionally raises AWS SDK
-logging to INFO - operation names, endpoints, retries, and error codes, never
-request bodies or headers. A redaction filter masks credential-shaped values
-in all log output.
+(`json` or `text`), and `file` (a path also writes a 0600 log file). Every
+command applies these settings once its configuration is loaded; the global
+`--debug` flag overrides the level.
+
+Under `--debug`, haru logs one line per AWS API call it makes, naming the
+operation, its non-sensitive parameters, and any error code. The AWS SDK
+loggers stay capped at INFO even then, because botocore logs full request and
+response headers and bodies at DEBUG - that cap is a security control, and
+haru's own lines exist to replace the visibility without it. A redaction
+filter masks credential-shaped values in all log output as defence in depth.
 
 ## Sessions
 

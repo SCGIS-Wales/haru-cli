@@ -73,6 +73,13 @@ otherwise, and remembered for later sessions. Pin `auth.sso.account_id` /
 are validated against your actual assignments, and a stale pin falls back to
 the chooser with a warning rather than failing later.
 
+A pin that sign-in proves is not assigned to you stops being applied by later
+commands too, so the fallback actually sticks; haru names the offending line
+and never edits your configuration. Editing or removing the pin gives it a
+fresh chance on the next login. Full precedence per field: the config pin
+(`account_id`, then `account_id_env`, then `role_name`) unless the last
+sign-in disproved that exact value, then the identity chosen at login.
+
 The consent screen you see in the browser ("Allow haru-cli to access your
 data?") is rendered by AWS IAM Identity Center, and its wording reflects the
 scopes the client requests. haru requests only `sso:account:access`, so AWS

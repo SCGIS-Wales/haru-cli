@@ -2,9 +2,13 @@
 
 Logging is deliberately conservative: haru never passes credentials to a
 logger, and a handler-level redaction filter masks anything that looks like a
-token as defence in depth. AWS wire logging (request/response bodies and
-headers) is never enabled; ``--debug`` raises botocore only to INFO, which
-reports operation names, endpoints, retries, and error codes.
+token as defence in depth.
+
+AWS wire logging is never enabled. The boto3/botocore loggers are *capped* at
+INFO even under ``--debug``, because botocore logs full request and response
+headers and bodies at DEBUG. That cap is a security control, not an oversight:
+visibility into AWS calls comes instead from haru's own DEBUG lines, emitted
+through :func:`log_aws_call` and :func:`log_aws_error` at each call site.
 """
 
 from __future__ import annotations
@@ -77,8 +81,9 @@ def configure_logging(
 ) -> None:
     """Install haru's log handlers; safe to call repeatedly.
 
-    ``debug`` forces DEBUG for haru's own loggers and raises AWS SDK logging
-    to INFO (operation names and error codes only, never bodies).
+    ``debug`` forces DEBUG for haru's own loggers. The AWS SDK loggers are
+    held at INFO even then, so ``--debug`` can never turn on botocore's
+    request/response logging; see the module docstring.
     """
     settings = cfg if cfg is not None else LoggingConfig()
     level = logging.DEBUG if debug else _level_of(settings.level)
@@ -101,9 +106,30 @@ def configure_logging(
         root.addHandler(handler)
 
     root.setLevel(level)
+    # Capped at INFO deliberately: botocore logs headers and bodies at DEBUG.
     aws_level = logging.INFO if debug else logging.WARNING
     for name in _AWS_LOGGERS:
         logging.getLogger(name).setLevel(aws_level)
+
+
+def log_aws_call(logger: logging.Logger, api: str, **fields: object) -> None:
+    """Log an AWS API call at DEBUG.
+
+    Pass identifiers, counts, regions, booleans, and expiry timestamps only.
+    Never pass a token, secret, credential, authorization code, PKCE verifier,
+    or prompt text: the handler-level redaction filter is defence in depth,
+    not permission. Fields that are None are omitted.
+    """
+    present = [(key, value) for key, value in fields.items() if value is not None]
+    # Keys are developer-supplied literals; values stay as %s args so the
+    # handler-level redaction filter still sees them.
+    template = "aws %s" + "".join(f" {key}=%s" for key, _ in present)
+    logger.debug(template, api, *(value for _, value in present))
+
+
+def log_aws_error(logger: logging.Logger, api: str, code: str | None) -> None:
+    """Log an AWS failure at DEBUG as an error code only, never the response."""
+    logger.debug("aws %s failed code=%s", api, code or "unknown")
 
 
 def _file_handler(path: str) -> logging.Handler:

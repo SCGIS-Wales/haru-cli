@@ -15,12 +15,12 @@ from rich.console import Console
 
 from haru.agents.factory import build_agent
 from haru.auth.session import build_boto3_session
+from haru.commands._common import load_cli_config
 from haru.commands.streaming import (
     build_bedrock_context,
     collect_response,
     surface_guardrail,
 )
-from haru.config import load_config, resolve_config_path
 from haru.config.schema import HaruConfig, SamplingConfig
 from haru.errors import ConfigError, HaruError
 from haru.models.bedrock import effective_sampling, get_model_config, sampling_overrides
@@ -307,8 +307,7 @@ def chat(  # noqa: PLR0913, PLR0917 - one option per flag; Click passes position
     """Chat interactively with a Bedrock agent (streaming)."""
     console = Console()
     try:
-        resolved = resolve_config_path(config_path)
-        config = load_config(resolved)
+        resolved, config = load_cli_config(config_path)
         configure_telemetry(config.observability)
         run_chat(
             config,

@@ -9,6 +9,7 @@ persisted identity.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -17,11 +18,14 @@ from haru.auth.identity import effective_identity
 from haru.auth.sso import SsoToken
 from haru.config.schema import AuthConfig, SsoConfig
 from haru.errors import AuthError, AuthExpiredError
+from haru.logging_setup import log_aws_call, log_aws_error
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import boto3
+
+logger = logging.getLogger(__name__)
 
 _REFRESH_WINDOW = timedelta(minutes=15)
 _RELOGIN_HINT = "run 'haru login'"
@@ -36,8 +40,11 @@ def ensure_token(
     """
     token = read_token_cache(config.sso.start_url, cache_dir=cache_dir)
     if token is None:
+        logger.debug("sso token cache miss for %s", config.sso.start_url)
         raise AuthExpiredError(f"No cached SSO token; {_RELOGIN_HINT}")
-    if token.expires_at <= datetime.now(UTC) + _REFRESH_WINDOW:
+    stale = token.expires_at <= datetime.now(UTC) + _REFRESH_WINDOW
+    logger.debug("sso token cache hit expires_at=%s refreshing=%s", token.expires_at, stale)
+    if stale:
         token = _refresh_token(config, token, oidc=oidc, cache_dir=cache_dir)
     return token
 
@@ -66,12 +73,22 @@ def session_for_role(  # noqa: PLR0913 - account/role pair plus optional seams
 
     if sso_client is None:
         sso_client = boto3.Session().client("sso", region_name=config.sso.sso_region)
+    target_region = region if region is not None else config.bedrock_region
+    log_aws_call(
+        logger,
+        "sso.GetRoleCredentials",
+        account_id=account_id,
+        role_name=role_name,
+        sso_region=config.sso.sso_region,
+        target_region=target_region,
+    )
     try:
         response = sso_client.get_role_credentials(
             roleName=role_name, accountId=account_id, accessToken=token.access_token
         )
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "")
+        log_aws_error(logger, "sso.GetRoleCredentials", code)
         if code == "UnauthorizedException":
             raise AuthExpiredError(f"SSO credentials rejected; {_RELOGIN_HINT}") from exc
         raise AuthError(
@@ -81,14 +98,18 @@ def session_for_role(  # noqa: PLR0913 - account/role pair plus optional seams
             " your configuration."
         ) from exc
     except (SSOTokenLoadError, UnauthorizedSSOTokenError, TokenRetrievalError) as exc:
+        log_aws_error(logger, "sso.GetRoleCredentials", "TokenError")
         raise AuthExpiredError(f"SSO credentials rejected; {_RELOGIN_HINT}") from exc
 
     credentials = response["roleCredentials"]
+    log_aws_call(
+        logger, "sso.GetRoleCredentials", outcome="ok", expiration=credentials.get("expiration")
+    )
     return boto3.Session(
         aws_access_key_id=credentials["accessKeyId"],
         aws_secret_access_key=credentials["secretAccessKey"],
         aws_session_token=credentials["sessionToken"],
-        region_name=region if region is not None else config.bedrock_region,
+        region_name=target_region,
     )
 
 
@@ -130,6 +151,7 @@ def _refresh_token(
         raise AuthExpiredError(f"SSO token expired and cannot be refreshed; {_RELOGIN_HINT}")
     if oidc is None:
         oidc = boto3.Session().client("sso-oidc", region_name=sso.sso_region)
+    log_aws_call(logger, "sso-oidc.CreateToken", grant_type="refresh_token", region=sso.sso_region)
     try:
         response = oidc.create_token(
             clientId=token.registration.client_id,
@@ -138,8 +160,10 @@ def _refresh_token(
             refreshToken=token.refresh_token,
         )
     except ClientError as exc:
+        log_aws_error(logger, "sso-oidc.CreateToken", exc.response.get("Error", {}).get("Code", ""))
         raise AuthExpiredError(f"SSO token refresh failed; {_RELOGIN_HINT}") from exc
 
+    log_aws_call(logger, "sso-oidc.CreateToken", outcome="ok", expires_in=response.get("expiresIn"))
     refreshed = SsoToken(
         access_token=response["accessToken"],
         refresh_token=response.get("refreshToken", token.refresh_token),
