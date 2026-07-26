@@ -22,10 +22,11 @@ def run_chat(
     *,
     console: Console,
     read_input: Callable[[str], str] = input,
+    prompts_root: Path | None = None,
 ) -> None:
     """Run the interactive chat loop until the user exits."""
     session = build_boto3_session(config.auth)
-    agent = build_agent(config, agent_name, session)
+    agent = build_agent(config, agent_name, session, prompts_root=prompts_root)
     console.print("haru chat - type 'exit' or press Ctrl-D to leave.")
     while True:
         try:
@@ -63,6 +64,7 @@ def chat(config_path: Path | None, agent_name: str | None) -> None:
     console = Console()
     try:
         config = load_config(config_path)
-        run_chat(config, agent_name, console=console)
+        prompts_root = config_path.parent / "prompts" if config_path is not None else None
+        run_chat(config, agent_name, console=console, prompts_root=prompts_root)
     except HaruError as exc:
         raise click.ClickException(str(exc)) from exc
