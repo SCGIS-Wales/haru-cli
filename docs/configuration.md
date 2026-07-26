@@ -50,6 +50,15 @@ configuration; `top_k` and `seed` travel via
 non-default sampling values (HTTP 400), and no Claude model honours `seed` —
 use these fields with models that accept them (for example Haiku 4.5).
 
+## Logging
+
+`logging.yaml` is honoured: `level` (DEBUG/INFO/WARNING/ERROR), `format`
+(`json` or `text`), and `file` (a path also writes a 0600 log file). The
+global `--debug` flag overrides the level and additionally raises AWS SDK
+logging to INFO - operation names, endpoints, retries, and error codes, never
+request bodies or headers. A redaction filter masks credential-shaped values
+in all log output.
+
 ## Sessions
 
 Conversation persistence is configured in the base file:

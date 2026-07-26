@@ -1,4 +1,11 @@
-"""Construct boto3 sessions from the cached SSO token, refreshing when needed."""
+"""Construct boto3 sessions from the cached SSO token, refreshing when needed.
+
+The flow is split into reusable seams: ``ensure_token`` produces a valid SSO
+token (refreshing when it is close to expiry) and ``session_for_role``
+exchanges that token for role credentials in a specific account. Diagnostics
+compose these directly to probe accounts and roles without disturbing the
+persisted identity.
+"""
 
 from __future__ import annotations
 
@@ -20,19 +27,34 @@ _REFRESH_WINDOW = timedelta(minutes=15)
 _RELOGIN_HINT = "run 'haru login'"
 
 
-def build_boto3_session(
-    config: AuthConfig,
-    *,
-    oidc: Any | None = None,
-    sso_client: Any | None = None,
-    cache_dir: Path | None = None,
-) -> boto3.Session:
-    """Build a boto3 session with role credentials from the cached SSO token.
+def ensure_token(
+    config: AuthConfig, *, oidc: Any | None = None, cache_dir: Path | None = None
+) -> SsoToken:
+    """Return a valid cached SSO token, refreshing it when close to expiry.
 
-    Refreshes the access token via the ``refresh_token`` grant when it is
-    within the refresh window. Raises AuthExpiredError whenever a fresh
-    interactive login is required, and AuthError when the selected role is
-    rejected for reasons re-login alone cannot fix.
+    Raises AuthExpiredError when no usable token exists.
+    """
+    token = read_token_cache(config.sso.start_url, cache_dir=cache_dir)
+    if token is None:
+        raise AuthExpiredError(f"No cached SSO token; {_RELOGIN_HINT}")
+    if token.expires_at <= datetime.now(UTC) + _REFRESH_WINDOW:
+        token = _refresh_token(config, token, oidc=oidc, cache_dir=cache_dir)
+    return token
+
+
+def session_for_role(  # noqa: PLR0913 - account/role pair plus optional seams
+    config: AuthConfig,
+    token: SsoToken,
+    account_id: str,
+    role_name: str,
+    *,
+    sso_client: Any | None = None,
+    region: str | None = None,
+) -> boto3.Session:
+    """Exchange ``token`` for credentials of ``role_name`` in ``account_id``.
+
+    Raises AuthExpiredError when the token itself is rejected, and AuthError
+    when the role is rejected (which re-login alone cannot fix).
     """
     import boto3
     from botocore.exceptions import (
@@ -42,16 +64,8 @@ def build_boto3_session(
         UnauthorizedSSOTokenError,
     )
 
-    sso = config.sso
-    token = read_token_cache(sso.start_url, cache_dir=cache_dir)
-    if token is None:
-        raise AuthExpiredError(f"No cached SSO token; {_RELOGIN_HINT}")
-    if token.expires_at <= datetime.now(UTC) + _REFRESH_WINDOW:
-        token = _refresh_token(config, token, oidc=oidc, cache_dir=cache_dir)
-
-    account_id, role_name = _resolve_identity(sso, cache_dir)
     if sso_client is None:
-        sso_client = boto3.Session().client("sso", region_name=sso.sso_region)
+        sso_client = boto3.Session().client("sso", region_name=config.sso.sso_region)
     try:
         response = sso_client.get_role_credentials(
             roleName=role_name, accountId=account_id, accessToken=token.access_token
@@ -74,8 +88,25 @@ def build_boto3_session(
         aws_access_key_id=credentials["accessKeyId"],
         aws_secret_access_key=credentials["secretAccessKey"],
         aws_session_token=credentials["sessionToken"],
-        region_name=config.bedrock_region,
+        region_name=region if region is not None else config.bedrock_region,
     )
+
+
+def build_boto3_session(
+    config: AuthConfig,
+    *,
+    oidc: Any | None = None,
+    sso_client: Any | None = None,
+    cache_dir: Path | None = None,
+) -> boto3.Session:
+    """Build a boto3 session with role credentials from the cached SSO token.
+
+    Resolves the account and role from configuration pins, the account-id
+    environment variable, then the identity chosen at login.
+    """
+    token = ensure_token(config, oidc=oidc, cache_dir=cache_dir)
+    account_id, role_name = _resolve_identity(config.sso, cache_dir)
+    return session_for_role(config, token, account_id, role_name, sso_client=sso_client)
 
 
 def _resolve_identity(sso: SsoConfig, cache_dir: Path | None) -> tuple[str, str]:

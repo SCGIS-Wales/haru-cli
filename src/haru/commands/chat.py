@@ -15,7 +15,11 @@ from rich.console import Console
 
 from haru.agents.factory import build_agent
 from haru.auth.session import build_boto3_session
-from haru.commands.streaming import collect_response, surface_guardrail
+from haru.commands.streaming import (
+    build_bedrock_context,
+    collect_response,
+    surface_guardrail,
+)
 from haru.config import load_config, resolve_config_path
 from haru.config.schema import HaruConfig, SamplingConfig
 from haru.errors import ConfigError, HaruError
@@ -99,9 +103,13 @@ def run_chat(  # noqa: PLR0913 - keyword-only wiring points, all optional
                     state["agent"],
                     line,
                     lambda text: console.print(text, end="", markup=False, highlight=False),
+                    context=build_bedrock_context(config, state["agent_name"]),
                 )
             except KeyboardInterrupt:
                 console.print("\n[interrupted]")
+                continue
+            except HaruError as exc:
+                console.print(f"\n[red]{exc}[/]")
                 continue
             console.print()
             surface_guardrail(result, console)
