@@ -7,10 +7,9 @@ the US; any explicitly configured prefix (including ``global.``) is respected
 as written, since configuration is the approval surface.
 """
 
-from typing import Any
+from __future__ import annotations
 
-import boto3
-from strands.models import BedrockModel
+from typing import TYPE_CHECKING, Any
 
 from haru.config.schema import (
     GuardrailsConfig,
@@ -21,6 +20,10 @@ from haru.config.schema import (
 )
 from haru.errors import ConfigError
 from haru.observability.guardrails import apply_guardrail
+
+if TYPE_CHECKING:
+    import boto3
+    from strands.models import BedrockModel
 
 _GEO_PREFIXES = ("us.", "eu.", "ap.", "apac.", "au.", "jp.", "global.")
 _DEFAULT_GEO_PREFIX = "us."
@@ -50,6 +53,8 @@ def build_model(
     and ``seed`` travel via Converse ``additionalModelRequestFields``. When
     ``guardrails`` is enabled, the Bedrock Guardrails parameters are attached.
     """
+    from strands.models import BedrockModel
+
     return BedrockModel(
         boto_session=session,
         region_name=model_cfg.region,

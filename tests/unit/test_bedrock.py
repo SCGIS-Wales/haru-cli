@@ -71,7 +71,7 @@ def test_resolve_model_id_residency(configured: str, expected: str) -> None:
 
 def test_build_model_kwargs(mocker: Any) -> None:
     """build_model constructs BedrockModel with the configured values."""
-    bedrock_model = mocker.patch("haru.models.bedrock.BedrockModel")
+    bedrock_model = mocker.patch("strands.models.BedrockModel")
     session = mocker.Mock()
 
     build_model(make_model_config(), session)
@@ -89,7 +89,7 @@ def test_build_model_kwargs(mocker: Any) -> None:
 
 def test_build_model_omits_unset_sampling(mocker: Any) -> None:
     """No sampling fields set means none are sent (Claude 5-series safe)."""
-    bedrock_model = mocker.patch("haru.models.bedrock.BedrockModel")
+    bedrock_model = mocker.patch("strands.models.BedrockModel")
 
     build_model(make_model_config(temperature=None), mocker.Mock())
 
@@ -100,7 +100,7 @@ def test_build_model_omits_unset_sampling(mocker: Any) -> None:
 
 def test_build_model_top_k_and_seed_via_request_fields(mocker: Any) -> None:
     """top_k and seed travel via Converse additionalModelRequestFields."""
-    bedrock_model = mocker.patch("haru.models.bedrock.BedrockModel")
+    bedrock_model = mocker.patch("strands.models.BedrockModel")
 
     build_model(make_model_config(temperature=0.2, top_p=0.9, top_k=50, seed=42), mocker.Mock())
 
@@ -112,7 +112,7 @@ def test_build_model_top_k_and_seed_via_request_fields(mocker: Any) -> None:
 
 def test_sampling_override_beats_model_entry(mocker: Any) -> None:
     """A per-field override wins; unset override fields keep model values."""
-    bedrock_model = mocker.patch("haru.models.bedrock.BedrockModel")
+    bedrock_model = mocker.patch("strands.models.BedrockModel")
     override = SamplingConfig(temperature=0.0, top_k=1)
 
     build_model(make_model_config(temperature=0.7, top_p=0.9), mocker.Mock(), sampling=override)
@@ -152,7 +152,7 @@ def test_sampling_config_bounds() -> None:
 
 def test_build_model_streaming_defaults_on(mocker: Any) -> None:
     """Streaming is on unless the entry disables it explicitly."""
-    bedrock_model = mocker.patch("haru.models.bedrock.BedrockModel")
+    bedrock_model = mocker.patch("strands.models.BedrockModel")
     build_model(make_model_config(), mocker.Mock())
     assert bedrock_model.call_args.kwargs["streaming"] is True
 
@@ -163,7 +163,7 @@ def test_build_model_streaming_defaults_on(mocker: Any) -> None:
 
 def test_build_model_for_every_configured_entry(mocker: Any) -> None:
     """Every entry in a config's model catalogue builds a model."""
-    bedrock_model = mocker.patch("haru.models.bedrock.BedrockModel")
+    bedrock_model = mocker.patch("strands.models.BedrockModel")
     config = make_config(
         fast={"model_id": "anthropic.a", "region": "us-east-1", "max_tokens": 1, "temperature": 0},
         deep={

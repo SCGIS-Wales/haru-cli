@@ -65,7 +65,15 @@ haru chat --agent supervisor --session-id demo
 AWS accounts and permission-set roles are discovered automatically (like
 `aws configure sso`), auto-selected when there is exactly one, prompted
 otherwise, and remembered for later sessions. Pin `auth.sso.account_id` /
-`role_name` in configuration only if you want to skip the discovery.
+`role_name` in configuration only if you want to skip the discovery — pins
+are validated against your actual assignments, and a stale pin falls back to
+the chooser with a warning rather than failing later.
+
+The consent screen you see in the browser ("Allow haru-cli to access your
+data?") is rendered by AWS IAM Identity Center, and its wording reflects the
+scopes the client requests. haru requests only `sso:account:access`, so AWS
+describes exactly that: the ability to assume roles you have been assigned.
+Once you approve, haru serves a local result page confirming the outcome.
 
 Authentication uses the same PKCE authorization-code flow as `aws sso login`,
 caching tokens in the botocore-compatible schema under `~/.aws/sso/cache`

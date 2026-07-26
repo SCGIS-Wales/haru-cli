@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Stale configuration pins no longer produce a broken sign-in: `haru login`
+  validates a pinned `role_name`/`account_id` against your actual Identity
+  Center assignments, warns, and falls back to the chooser when they do not
+  match (previously a leftover `role_name` from an older `config init` was
+  persisted unchecked and every later command failed).
+- Role rejections are reported honestly: `AWS rejected role 'X' in account
+  'Y' … the role may not be assigned to you` instead of the misleading
+  "SSO credentials rejected; run 'haru login'", which is now reserved for
+  genuinely invalid tokens.
+
+### Changed
+
+- CLI startup is roughly 6x faster (~0.6s to ~0.1s for `haru --version`):
+  strands, mcp, boto3, botocore, and opentelemetry are imported lazily at
+  their call sites, so `--help`, `--version`, `config`, `agents`, and
+  `session list` never load the agent/AWS stack. A guard test fails the
+  build if an eager import creeps back in.
+- `haru login` and `haru config show` report where the account and role
+  came from (login selection, pinned in config, or an environment variable).
+
 ### Added
 
 - The login callback now serves a proper local result page (dark themed,

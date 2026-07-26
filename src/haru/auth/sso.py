@@ -18,9 +18,6 @@ from string import Template
 from typing import Any, cast
 from urllib.parse import parse_qs, urlencode, urlsplit
 
-import boto3
-from botocore.exceptions import ClientError
-
 from haru.auth.pkce import generate_pkce_pair
 from haru.config.schema import AuthConfig
 from haru.errors import AuthError
@@ -122,6 +119,8 @@ def register_client(
     oidc: Any, client_name: str, start_url: str, redirect_uri: str
 ) -> ClientRegistration:
     """Register a public OIDC client for the authorization-code + PKCE flow."""
+    from botocore.exceptions import ClientError
+
     host = urlsplit(redirect_uri).hostname
     if host != _LOOPBACK_HOST:
         raise AuthError(f"Redirect URI must be a {_LOOPBACK_HOST} loopback address, got {host!r}")
@@ -165,6 +164,8 @@ def exchange_code(
     oidc: Any, registration: ClientRegistration, code: str, verifier: str, redirect_uri: str
 ) -> SsoToken:
     """Exchange an authorization code (plus PKCE verifier) for an SSO token."""
+    from botocore.exceptions import ClientError
+
     try:
         response = oidc.create_token(
             clientId=registration.client_id,
@@ -199,6 +200,8 @@ def run_login(
     """
     sso = config.sso
     if oidc is None:
+        import boto3
+
         oidc = boto3.Session().client("sso-oidc", region_name=sso.sso_region)
     open_url = opener if opener is not None else webbrowser.open
 

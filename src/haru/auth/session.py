@@ -1,23 +1,20 @@
 """Construct boto3 sessions from the cached SSO token, refreshing when needed."""
 
-import os
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from typing import Any
+from __future__ import annotations
 
-import boto3
-from botocore.exceptions import (
-    ClientError,
-    SSOTokenLoadError,
-    TokenRetrievalError,
-    UnauthorizedSSOTokenError,
-)
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
 from haru.auth.cache import read_token_cache, write_token_cache
-from haru.auth.identity import read_identity
+from haru.auth.identity import effective_identity
 from haru.auth.sso import SsoToken
 from haru.config.schema import AuthConfig, SsoConfig
-from haru.errors import AuthExpiredError
+from haru.errors import AuthError, AuthExpiredError
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import boto3
 
 _REFRESH_WINDOW = timedelta(minutes=15)
 _RELOGIN_HINT = "run 'haru login'"
@@ -34,8 +31,17 @@ def build_boto3_session(
 
     Refreshes the access token via the ``refresh_token`` grant when it is
     within the refresh window. Raises AuthExpiredError whenever a fresh
-    interactive login is required.
+    interactive login is required, and AuthError when the selected role is
+    rejected for reasons re-login alone cannot fix.
     """
+    import boto3
+    from botocore.exceptions import (
+        ClientError,
+        SSOTokenLoadError,
+        TokenRetrievalError,
+        UnauthorizedSSOTokenError,
+    )
+
     sso = config.sso
     token = read_token_cache(sso.start_url, cache_dir=cache_dir)
     if token is None:
@@ -50,7 +56,17 @@ def build_boto3_session(
         response = sso_client.get_role_credentials(
             roleName=role_name, accountId=account_id, accessToken=token.access_token
         )
-    except (ClientError, SSOTokenLoadError, UnauthorizedSSOTokenError, TokenRetrievalError) as exc:
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code == "UnauthorizedException":
+            raise AuthExpiredError(f"SSO credentials rejected; {_RELOGIN_HINT}") from exc
+        raise AuthError(
+            f"AWS rejected role {role_name!r} in account {account_id}"
+            f" ({code or 'unknown error'}). The role may not be assigned to you -"
+            " re-run 'haru login' to choose again, or fix auth.sso.role_name in"
+            " your configuration."
+        ) from exc
+    except (SSOTokenLoadError, UnauthorizedSSOTokenError, TokenRetrievalError) as exc:
         raise AuthExpiredError(f"SSO credentials rejected; {_RELOGIN_HINT}") from exc
 
     credentials = response["roleCredentials"]
@@ -64,18 +80,7 @@ def build_boto3_session(
 
 def _resolve_identity(sso: SsoConfig, cache_dir: Path | None) -> tuple[str, str]:
     """Resolve the account id and role: config pins, env var, then the login choice."""
-    stored = read_identity(sso.start_url, cache_dir)
-
-    account_id = sso.account_id
-    if account_id is None and sso.account_id_env is not None:
-        account_id = os.environ.get(sso.account_id_env)
-    if account_id is None and stored is not None:
-        account_id = stored.account_id
-
-    role_name = sso.role_name
-    if role_name is None and stored is not None:
-        role_name = stored.role_name
-
+    account_id, _, role_name, _ = effective_identity(sso, cache_dir)
     if account_id is None or role_name is None:
         raise AuthExpiredError(f"No AWS account/role selected yet; {_RELOGIN_HINT}")
     return account_id, role_name
@@ -85,6 +90,9 @@ def _refresh_token(
     config: AuthConfig, token: SsoToken, *, oidc: Any | None, cache_dir: Path | None
 ) -> SsoToken:
     """Refresh an expiring token via the ``refresh_token`` grant and re-cache it."""
+    import boto3
+    from botocore.exceptions import ClientError
+
     sso = config.sso
     now = datetime.now(UTC)
     if token.refresh_token is None or token.registration.expires_at <= now:

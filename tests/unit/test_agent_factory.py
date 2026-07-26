@@ -48,7 +48,7 @@ def make_config() -> HaruConfig:
 
 def test_default_agent_uses_default_model(mocker: Any) -> None:
     """No agent name builds an agent on the default model."""
-    agent_cls = mocker.patch("haru.agents.factory.Agent")
+    agent_cls = mocker.patch("strands.Agent")
     build_model = mocker.patch("haru.agents.factory.build_model", return_value="model-obj")
     session = mocker.Mock()
 
@@ -60,7 +60,7 @@ def test_default_agent_uses_default_model(mocker: Any) -> None:
 
 def test_named_agent_uses_its_model(mocker: Any) -> None:
     """A named agent resolves its own model key (no prompt ref: no system prompt)."""
-    agent_cls = mocker.patch("haru.agents.factory.Agent")
+    agent_cls = mocker.patch("strands.Agent")
     build_model = mocker.patch("haru.agents.factory.build_model", return_value="model-obj")
 
     build_agent(make_config(), "writer", mocker.Mock())
@@ -73,7 +73,7 @@ def test_named_agent_uses_its_model(mocker: Any) -> None:
 
 def test_default_agent_model_override(mocker: Any) -> None:
     """model_name overrides the default agent's model."""
-    mocker.patch("haru.agents.factory.Agent")
+    mocker.patch("strands.Agent")
     build_model = mocker.patch("haru.agents.factory.build_model", return_value="model-obj")
 
     build_agent(make_config(), None, mocker.Mock(), model_name="deep")
@@ -83,7 +83,7 @@ def test_default_agent_model_override(mocker: Any) -> None:
 
 def test_agent_sampling_merges_with_override(mocker: Any) -> None:
     """CLI override beats the agent's sampling block, per-field."""
-    mocker.patch("haru.agents.factory.Agent")
+    mocker.patch("strands.Agent")
     build_model = mocker.patch("haru.agents.factory.build_model", return_value="model-obj")
     payload: dict[str, Any] = {
         **CONFIG_PAYLOAD,
@@ -101,14 +101,14 @@ def test_agent_sampling_merges_with_override(mocker: Any) -> None:
 
 def test_named_agent_rejects_model_override(mocker: Any) -> None:
     """Named agents pin their model; overrides raise ConfigError."""
-    mocker.patch("haru.agents.factory.Agent")
+    mocker.patch("strands.Agent")
     with pytest.raises(ConfigError, match="default agent"):
         build_agent(make_config(), "writer", mocker.Mock(), model_name="fast")
 
 
 def test_unknown_agent_raises(mocker: Any) -> None:
     """An unknown agent name raises ConfigError listing configured agents."""
-    mocker.patch("haru.agents.factory.Agent")
+    mocker.patch("strands.Agent")
     with pytest.raises(ConfigError, match=r"ghost.*writer"):
         build_agent(make_config(), "ghost", mocker.Mock())
 
@@ -124,7 +124,7 @@ def make_config_with_prompt_ref(ref: str) -> HaruConfig:
 
 def test_agent_resolves_system_prompt_ref(mocker: Any, tmp_path: Path) -> None:
     """An agent's system_prompt_ref resolves to the prompt file contents."""
-    agent_cls = mocker.patch("haru.agents.factory.Agent")
+    agent_cls = mocker.patch("strands.Agent")
     mocker.patch("haru.agents.factory.build_model", return_value="model-obj")
     (tmp_path / "writer.md").write_text("Write well.\n", encoding="utf-8")
 
@@ -143,7 +143,7 @@ def test_agent_resolves_system_prompt_ref(mocker: Any, tmp_path: Path) -> None:
 
 def test_agent_composed_prompt_ref(mocker: Any, tmp_path: Path) -> None:
     """Composite refs concatenate base and overlay."""
-    agent_cls = mocker.patch("haru.agents.factory.Agent")
+    agent_cls = mocker.patch("strands.Agent")
     mocker.patch("haru.agents.factory.build_model", return_value="model-obj")
     (tmp_path / "base.md").write_text("Base rules.", encoding="utf-8")
     (tmp_path / "writer.md").write_text("Write well.", encoding="utf-8")
@@ -166,7 +166,7 @@ def test_agent_composed_prompt_ref(mocker: Any, tmp_path: Path) -> None:
 
 def test_agent_missing_prompt_ref_raises(mocker: Any, tmp_path: Path) -> None:
     """A missing prompt reference fails agent construction with ConfigError."""
-    mocker.patch("haru.agents.factory.Agent")
+    mocker.patch("strands.Agent")
     mocker.patch("haru.agents.factory.build_model", return_value="model-obj")
 
     with pytest.raises(ConfigError, match="writer"):

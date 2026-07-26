@@ -12,7 +12,7 @@ from haru.auth.identity import SelectedIdentity, write_identity
 from haru.auth.session import build_boto3_session
 from haru.auth.sso import ClientRegistration, SsoToken
 from haru.config.schema import AuthConfig
-from haru.errors import AuthExpiredError
+from haru.errors import AuthError, AuthExpiredError
 
 START_URL = "https://example.awsapps.com/start"
 
@@ -159,14 +159,37 @@ def test_refresh_failure_raises(tmp_path: Path, mocker: Any) -> None:
 
 @pytest.mark.usefixtures("account_env")
 def test_unauthorized_role_credentials_raises(tmp_path: Path, mocker: Any) -> None:
-    """UnauthorizedException from get_role_credentials requires re-login."""
+    """UnauthorizedException means the token is bad: re-login is the fix."""
     seed_cache(tmp_path)
     sso_client = mocker.Mock()
     sso_client.get_role_credentials.side_effect = ClientError(
         {"Error": {"Code": "UnauthorizedException", "Message": "expired"}}, "GetRoleCredentials"
     )
-    with pytest.raises(AuthExpiredError, match="rejected"):
+    with pytest.raises(AuthExpiredError, match="haru login"):
         build_boto3_session(make_config(), sso_client=sso_client, cache_dir=tmp_path)
+
+
+@pytest.mark.usefixtures("account_env")
+def test_forbidden_role_reports_role_problem(tmp_path: Path, mocker: Any) -> None:
+    """A role rejection names the role and account, not an expired token."""
+    seed_cache(tmp_path)
+    write_identity(
+        SelectedIdentity(account_id="123456789012", role_name="HaruBedrockInvoke"),
+        START_URL,
+        tmp_path,
+    )
+    sso_client = mocker.Mock()
+    sso_client.get_role_credentials.side_effect = ClientError(
+        {"Error": {"Code": "ForbiddenException", "Message": "no"}}, "GetRoleCredentials"
+    )
+
+    with pytest.raises(AuthError) as excinfo:
+        build_boto3_session(make_config(), sso_client=sso_client, cache_dir=tmp_path)
+
+    message = str(excinfo.value)
+    assert "HaruBedrockInvoke" in message
+    assert "not be assigned to you" in message
+    assert not isinstance(excinfo.value, AuthExpiredError)
 
 
 def test_no_identity_anywhere_requires_login(

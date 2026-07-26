@@ -16,14 +16,14 @@ def make_obs(**otel: Any) -> ObservabilityConfig:
 
 def test_disabled_is_noop(mocker: Any) -> None:
     """Disabled telemetry never touches the OTel SDK."""
-    telemetry_cls = mocker.patch("haru.observability.telemetry.StrandsTelemetry")
+    telemetry_cls = mocker.patch("strands.telemetry.StrandsTelemetry")
     configure_telemetry(make_obs(enabled=False))
     telemetry_cls.assert_not_called()
 
 
 def test_missing_section_is_noop(mocker: Any) -> None:
     """No observability section means no telemetry setup."""
-    telemetry_cls = mocker.patch("haru.observability.telemetry.StrandsTelemetry")
+    telemetry_cls = mocker.patch("strands.telemetry.StrandsTelemetry")
     configure_telemetry(None)
     telemetry_cls.assert_not_called()
 
@@ -32,7 +32,7 @@ def test_enabled_initialises_otlp(mocker: Any, monkeypatch: pytest.MonkeyPatch) 
     """Enabled telemetry sets env vars and initialises the OTLP exporter."""
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
     monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
-    telemetry_cls = mocker.patch("haru.observability.telemetry.StrandsTelemetry")
+    telemetry_cls = mocker.patch("strands.telemetry.StrandsTelemetry")
 
     configure_telemetry(
         make_obs(enabled=True, endpoint="https://otel.example.com:4317", service_name="haru-cli")
@@ -48,7 +48,7 @@ def test_enabled_initialises_otlp(mocker: Any, monkeypatch: pytest.MonkeyPatch) 
 def test_console_export_opt_in(mocker: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """console_export additionally wires the console exporter."""
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
-    telemetry_cls = mocker.patch("haru.observability.telemetry.StrandsTelemetry")
+    telemetry_cls = mocker.patch("strands.telemetry.StrandsTelemetry")
 
     configure_telemetry(make_obs(enabled=True, console_export=True))
 
@@ -58,7 +58,7 @@ def test_console_export_opt_in(mocker: Any, monkeypatch: pytest.MonkeyPatch) -> 
 def test_existing_env_not_overwritten(mocker: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """Explicitly exported OTel env vars win over config values."""
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://operator.example.com:4317")
-    mocker.patch("haru.observability.telemetry.StrandsTelemetry")
+    mocker.patch("strands.telemetry.StrandsTelemetry")
 
     configure_telemetry(make_obs(enabled=True, endpoint="https://config.example.com:4317"))
 

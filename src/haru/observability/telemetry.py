@@ -8,8 +8,6 @@ published via the standard OTel environment variables.
 import logging
 import os
 
-from strands.telemetry import StrandsTelemetry
-
 from haru.config.schema import ObservabilityConfig
 
 logger = logging.getLogger(__name__)
@@ -22,6 +20,8 @@ def configure_telemetry(obs_cfg: ObservabilityConfig | None) -> None:
     """Initialise OTel exporters when enabled; do nothing when disabled."""
     if obs_cfg is None or not obs_cfg.otel.enabled:
         return
+    from strands.telemetry import StrandsTelemetry
+
     otel = obs_cfg.otel
     if otel.endpoint is not None:
         os.environ.setdefault(_OTEL_ENDPOINT_ENV, otel.endpoint)

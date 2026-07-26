@@ -5,21 +5,25 @@ tools, and MCP tools. Multi-agent orchestration composes these in
 ``haru.agents.orchestration``.
 """
 
-from collections.abc import Mapping
-from pathlib import Path
-from typing import Any
+from __future__ import annotations
 
-import boto3
-from strands import Agent
-from strands.models import BedrockModel
-from strands.session.session_manager import SessionManager
-from strands.tools.mcp import MCPClient
+from typing import TYPE_CHECKING, Any
 
 from haru.config.schema import HaruConfig, SamplingConfig
 from haru.errors import ConfigError
 from haru.models.bedrock import build_model, get_model_config, merge_sampling
 from haru.steering.prompts import DEFAULT_PROMPTS_ROOT, load_prompts, resolve_prompt
 from haru.tools.mcp import collect_tools
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from pathlib import Path
+
+    import boto3
+    from strands import Agent
+    from strands.models import BedrockModel
+    from strands.session.session_manager import SessionManager
+    from strands.tools.mcp import MCPClient
 
 
 def build_agent(  # noqa: PLR0913 - keyword-only wiring points, all optional
@@ -41,6 +45,8 @@ def build_agent(  # noqa: PLR0913 - keyword-only wiring points, all optional
     model entry). Raises ConfigError for unknown agents, prompt references,
     tools, or an invalid override.
     """
+    from strands import Agent
+
     if agent_name is None:
         model_cfg = get_model_config(config, model_name)
         model = build_model(model_cfg, session, guardrails=config.guardrails, sampling=sampling)
