@@ -27,6 +27,38 @@ from haru.config.schema import (
 from haru.errors import ConfigError
 
 DEFAULT_CONFIG_PATH = Path("config") / "haru.yaml"
+CONFIG_ENV_VAR = "HARU_CONFIG"
+
+
+def user_config_path() -> Path:
+    """Return the user-level config path (XDG-aware): ~/.config/haru/haru.yaml."""
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    return base / "haru" / "haru.yaml"
+
+
+def resolve_config_path(path: Path | None = None) -> Path:
+    """Resolve the configuration file to load.
+
+    Precedence: explicit ``path`` (--config), the ``HARU_CONFIG`` environment
+    variable, the project-local ``config/haru.yaml``, then the user-level
+    config. Raises ConfigError with guidance when nothing is found.
+    """
+    if path is not None:
+        return path
+    env_path = os.environ.get(CONFIG_ENV_VAR)
+    if env_path:
+        return Path(env_path)
+    if DEFAULT_CONFIG_PATH.is_file():
+        return DEFAULT_CONFIG_PATH
+    user_path = user_config_path()
+    if user_path.is_file():
+        return user_path
+    raise ConfigError(
+        f"No configuration found (looked for ./{DEFAULT_CONFIG_PATH} and {user_path})."
+        " Run 'haru config init' to create one, or pass --config / set $HARU_CONFIG."
+    )
+
 
 _ENV_PATTERN = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}|\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _ENV_REFERENCE = re.compile(r"^\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}$")
@@ -58,7 +90,7 @@ def load_config(path: Path | None = None, *, with_includes: bool = True) -> Haru
     Raises ConfigError on any missing file, malformed YAML, inline secret,
     unset environment reference, or schema violation.
     """
-    config_path = path if path is not None else DEFAULT_CONFIG_PATH
+    config_path = resolve_config_path(path)
     base = _validate(HaruConfig, _load_yaml(config_path), config_path)
     if not with_includes:
         return base

@@ -14,7 +14,7 @@ from haru.auth.sso import ClientRegistration, SsoToken
 from haru.cli import cli
 from haru.commands.chat import run_chat
 from haru.config.schema import HaruConfig
-from haru.errors import AuthExpiredError
+from haru.errors import AuthExpiredError, ConfigError
 
 
 class FakeAgent:
@@ -194,6 +194,110 @@ def test_chat_skips_blank_lines(runner: CliRunner, tmp_path: Path, mocker: Any) 
 
     assert result.exit_code == 0
     assert agent.prompts == []
+
+
+CHAT_CONFIG = (
+    BASE_CONFIG
+    + """\
+models:
+  default_model: fast
+  models:
+    fast:
+      model_id: anthropic.a
+      region: us-east-1
+      max_tokens: 1024
+      temperature: 0.2
+    deep:
+      model_id: anthropic.b
+      region: us-east-1
+      max_tokens: 2048
+      temperature: 0.5
+agents:
+  agents:
+    writer:
+      model: deep
+"""
+)
+
+
+def make_chat_config(tmp_path: Path) -> Path:
+    """Write a chat config with models and agents; return its path."""
+    config_path = tmp_path / "haru.yaml"
+    config_path.write_text(CHAT_CONFIG, encoding="utf-8")
+    return config_path
+
+
+def test_chat_slash_listing_and_help(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """/help, /model, and /agent list commands, models, and agents."""
+    mocker.patch("haru.commands.chat.build_boto3_session")
+    mocker.patch(
+        "haru.commands.chat.build_agent",
+        side_effect=lambda *a, **k: FakeAgent(hello_events()),
+    )
+
+    result = runner.invoke(
+        cli,
+        ["chat", "--config", str(make_chat_config(tmp_path))],
+        input="/help\n/model\n/agent\n/bogus\nexit\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "/model <name>" in result.output
+    assert "fast" in result.output
+    assert "(default, active)" in result.output
+    assert "writer" in result.output
+    assert "model=deep" in result.output
+    assert "Unknown command /bogus" in result.output
+
+
+def test_chat_slash_switch_model_and_agent(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """/model and /agent rebuild the agent with the selected target."""
+    mocker.patch("haru.commands.chat.build_boto3_session")
+    build_agent = mocker.patch(
+        "haru.commands.chat.build_agent",
+        side_effect=lambda *a, **k: FakeAgent(hello_events()),
+    )
+
+    result = runner.invoke(
+        cli,
+        ["chat", "--config", str(make_chat_config(tmp_path))],
+        input="/model deep\n/agent writer\nexit\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Switched to model 'deep' (conversation reset)." in result.output
+    assert "Switched to agent 'writer' (conversation reset)." in result.output
+    model_call = build_agent.call_args_list[1]
+    assert model_call.args[1] is None
+    assert model_call.kwargs["model_name"] == "deep"
+    agent_call = build_agent.call_args_list[2]
+    assert agent_call.args[1] == "writer"
+    assert agent_call.kwargs["model_name"] is None
+
+
+def test_chat_slash_switch_failure_keeps_agent(
+    runner: CliRunner, tmp_path: Path, mocker: Any
+) -> None:
+    """A failed switch reports the error and keeps the current agent."""
+    mocker.patch("haru.commands.chat.build_boto3_session")
+    good_agent = FakeAgent(hello_events())
+
+    def agent_factory(config: Any, name: Any, *a: Any, **k: Any) -> FakeAgent:
+        if name == "ghost":
+            raise ConfigError("Unknown agent 'ghost'")
+        return good_agent
+
+    mocker.patch("haru.commands.chat.build_agent", side_effect=agent_factory)
+
+    result = runner.invoke(
+        cli,
+        ["chat", "--config", str(make_chat_config(tmp_path))],
+        input="/agent ghost\nsay hi\nexit\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Unknown agent 'ghost'" in result.output
+    assert "Hello world" in result.output
 
 
 def test_chat_session_id_builds_session_manager(

@@ -1,0 +1,15 @@
+mcp_servers:
+  aws-docs:
+    transport: stdio
+    command: uvx
+    args: ["awslabs.aws-documentation-mcp-server@latest"]
+    disabled: false
+    continue_on_error: true
+  # Example streamable-http server. Uncomment, point at your endpoint, and
+  # export the referenced environment variable before enabling.
+  # internal-api:
+  #   transport: streamable-http
+  #   url: https://mcp.internal.example.com/mcp
+  #   headers:
+  #     authorization: ${env:HARU_INTERNAL_MCP_TOKEN}
+  #   disabled: true

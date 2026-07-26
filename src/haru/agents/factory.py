@@ -30,14 +30,23 @@ def build_agent(  # noqa: PLR0913 - keyword-only wiring points, all optional
     prompts_root: Path | None = None,
     mcp_clients: Mapping[str, MCPClient] | None = None,
     session_manager: SessionManager | None = None,
+    model_name: str | None = None,
 ) -> Agent:
     """Build the named agent from configuration (default model when unnamed).
 
-    Raises ConfigError for unknown agents, prompt references, or tools.
+    ``model_name`` overrides the model for the default (unnamed) agent only;
+    named agents pin their own model. Raises ConfigError for unknown agents,
+    prompt references, tools, or an invalid override.
     """
     if agent_name is None:
-        model = build_model(get_model_config(config), session, guardrails=config.guardrails)
+        model_cfg = get_model_config(config, model_name)
+        model = build_model(model_cfg, session, guardrails=config.guardrails)
         return Agent(model=model, session_manager=session_manager)
+    if model_name is not None:
+        raise ConfigError(
+            f"Agent {agent_name!r} pins its own model; model overrides apply"
+            " to the default agent only"
+        )
     model, system_prompt, tools = resolve_agent_parts(
         config, agent_name, session, prompts_root=prompts_root, mcp_clients=mcp_clients
     )

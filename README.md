@@ -28,22 +28,38 @@ uv sync
 
 | Command                          | Purpose                                                       |
 | -------------------------------- | ------------------------------------------------------------- |
+| `haru config init`               | Create a starter configuration (interactive)                  |
+| `haru config show`               | Show the resolved configuration (no secrets)                  |
 | `haru login`                     | Browser sign-in to IAM Identity Center (OAuth 2.0 + PKCE)     |
 | `haru chat`                      | Interactive streaming chat REPL                               |
 | `haru chat --session-id <id>`    | Persist and restore the conversation under a session id       |
 | `haru chat --agent <name>`       | Chat with a specific configured agent                         |
 | `haru run "<prompt>"`            | One-shot prompt; prints the answer and exits                  |
+| `haru agents`                    | List configured agents (model, prompt, tools, MCP)            |
 | `haru session list`              | List stored session ids                                       |
 | `haru --version`                 | Print the installed version                                   |
 
-Every command accepts `--config <path>` (default: `config/haru.yaml`).
+Configuration is resolved from `--config`, then `$HARU_CONFIG`, then
+`./config/haru.yaml`, then `~/.config/haru/haru.yaml`.
+
+Inside `haru chat`, slash commands switch targets mid-session:
+
+| REPL command     | Purpose                                                    |
+| ---------------- | ---------------------------------------------------------- |
+| `/help`          | Show REPL commands                                         |
+| `/model`         | List configured models (default and active marked)         |
+| `/model <name>`  | Switch the default agent to that model (resets the chat)   |
+| `/agent`         | List configured agents                                     |
+| `/agent <name>`  | Switch to that agent (resets the chat)                     |
 
 ## Quickstart
 
 ```bash
-uv run haru login
-uv run haru run "Summarise the Converse API in two sentences."
-uv run haru chat --agent supervisor --session-id demo
+haru config init      # writes ~/.config/haru (asks for your SSO start URL)
+export HARU_AWS_ACCOUNT_ID=<your AWS account id>
+haru login
+haru run "Summarise the Converse API in two sentences."
+haru chat --agent supervisor --session-id demo
 ```
 
 Authentication uses the same PKCE authorization-code flow as `aws sso login`,
