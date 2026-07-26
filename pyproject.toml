@@ -60,9 +60,9 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "PL", "RUF", "S"]
 
 [tool.ruff.lint.per-file-ignores]
-# S101: pytest uses bare asserts. S105/S106: tests exercise the inline-secret
-# rejection with deliberately fake credential strings.
-"tests/**" = ["S101", "PLR2004", "S105", "S106"]
+# S101: pytest uses bare asserts. S105/S106/S107: tests exercise secret
+# handling with deliberately fake credential strings.
+"tests/**" = ["S101", "PLR2004", "S105", "S106", "S107"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["haru"]
@@ -71,6 +71,12 @@ known-first-party = ["haru"]
 python_version = "3.13"
 strict = true
 warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# boto3/botocore ship no type information; clients are typed as Any at the
+# auth module boundary, where all errors are converted to haru exceptions.
+module = ["boto3", "boto3.*", "botocore", "botocore.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = "--cov --cov-report=term-missing --cov-fail-under=90 --strict-markers"

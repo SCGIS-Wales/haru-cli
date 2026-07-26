@@ -49,16 +49,19 @@ def resolve_env(value: str) -> str:
     return _ENV_PATTERN.sub(_replace, value)
 
 
-def load_config(path: Path | None = None) -> HaruConfig:
+def load_config(path: Path | None = None, *, with_includes: bool = True) -> HaruConfig:
     """Load the full configuration from ``path`` (default ``config/haru.yaml``).
 
     Parses the base document, then resolves every declared include relative to
-    the base file's directory. Raises ConfigError on any missing file,
-    malformed YAML, inline secret, unset environment reference, or schema
-    violation.
+    the base file's directory. Pass ``with_includes=False`` to load only the
+    base document (commands that need just the ``app``/``auth`` sections).
+    Raises ConfigError on any missing file, malformed YAML, inline secret,
+    unset environment reference, or schema violation.
     """
     config_path = path if path is not None else DEFAULT_CONFIG_PATH
     base = _validate(HaruConfig, _load_yaml(config_path), config_path)
+    if not with_includes:
+        return base
     config = load_includes(base, config_path.parent)
     _check_cross_references(config)
     return config
