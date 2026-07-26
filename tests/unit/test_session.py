@@ -8,10 +8,11 @@ import pytest
 from botocore.exceptions import ClientError
 
 from haru.auth.cache import read_token_cache, write_token_cache
+from haru.auth.identity import SelectedIdentity, write_identity
 from haru.auth.session import build_boto3_session
 from haru.auth.sso import ClientRegistration, SsoToken
 from haru.config.schema import AuthConfig
-from haru.errors import AuthExpiredError, ConfigError
+from haru.errors import AuthExpiredError
 
 START_URL = "https://example.awsapps.com/start"
 
@@ -168,9 +169,64 @@ def test_unauthorized_role_credentials_raises(tmp_path: Path, mocker: Any) -> No
         build_boto3_session(make_config(), sso_client=sso_client, cache_dir=tmp_path)
 
 
-def test_missing_account_env_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A missing account id environment variable is a configuration error."""
+def test_no_identity_anywhere_requires_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No pin, no env var, no stored identity: re-login is required."""
     monkeypatch.delenv("HARU_AWS_ACCOUNT_ID", raising=False)
     seed_cache(tmp_path)
-    with pytest.raises(ConfigError, match="HARU_AWS_ACCOUNT_ID"):
+    with pytest.raises(AuthExpiredError, match="haru login"):
         build_boto3_session(make_config(), cache_dir=tmp_path)
+
+
+def test_stored_identity_used_when_unpinned(tmp_path: Path, mocker: Any) -> None:
+    """The identity chosen at login backs the session when config pins nothing."""
+    seed_cache(tmp_path)
+    write_identity(
+        SelectedIdentity(account_id="777788889999", role_name="StoredRole"),
+        START_URL,
+        tmp_path,
+    )
+    sso_client = mocker.Mock()
+    sso_client.get_role_credentials.return_value = ROLE_CREDENTIALS
+    config = AuthConfig.model_validate(
+        {
+            "sso": {"start_url": START_URL, "sso_region": "us-east-1"},
+            "bedrock_region": "eu-west-1",
+        }
+    )
+
+    build_boto3_session(config, sso_client=sso_client, cache_dir=tmp_path)
+
+    sso_client.get_role_credentials.assert_called_once_with(
+        roleName="StoredRole", accountId="777788889999", accessToken="access-abc"
+    )
+
+
+def test_config_pins_beat_stored_identity(tmp_path: Path, mocker: Any) -> None:
+    """Explicit config account/role win over the stored login choice."""
+    seed_cache(tmp_path)
+    write_identity(
+        SelectedIdentity(account_id="777788889999", role_name="StoredRole"),
+        START_URL,
+        tmp_path,
+    )
+    sso_client = mocker.Mock()
+    sso_client.get_role_credentials.return_value = ROLE_CREDENTIALS
+    config = AuthConfig.model_validate(
+        {
+            "sso": {
+                "start_url": START_URL,
+                "sso_region": "us-east-1",
+                "account_id": "123456789012",
+                "role_name": "PinnedRole",
+            },
+            "bedrock_region": "eu-west-1",
+        }
+    )
+
+    build_boto3_session(config, sso_client=sso_client, cache_dir=tmp_path)
+
+    sso_client.get_role_credentials.assert_called_once_with(
+        roleName="PinnedRole", accountId="123456789012", accessToken="access-abc"
+    )

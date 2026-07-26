@@ -65,7 +65,6 @@ def config() -> None:
     "--sso-region", default="us-east-1", prompt="Identity Center region", show_default=True
 )
 @click.option("--bedrock-region", default="us-east-1", prompt="Bedrock region", show_default=True)
-@click.option("--role-name", default="HaruBedrockInvoke", prompt="IAM role name", show_default=True)
 @click.option(
     "--guardrail-id",
     default="",
@@ -78,7 +77,6 @@ def init(  # noqa: PLR0913, PLR0917 - one option per prompted setting; Click pas
     start_url: str,
     sso_region: str,
     bedrock_region: str,
-    role_name: str,
     guardrail_id: str,
     force: bool,
 ) -> None:
@@ -92,7 +90,6 @@ def init(  # noqa: PLR0913, PLR0917 - one option per prompted setting; Click pas
         "__START_URL__": start_url,
         "__SSO_REGION__": sso_region,
         "__BEDROCK_REGION__": bedrock_region,
-        "__ROLE_NAME__": role_name,
     }
     templates = resources.files("haru.config.templates")
     (target / "prompts").mkdir(parents=True, exist_ok=True)
@@ -113,9 +110,8 @@ def init(  # noqa: PLR0913, PLR0917 - one option per prompted setting; Click pas
 
     click.echo(f"Configuration written to {target}.")
     click.echo("Next steps:")
-    click.echo("  1. export HARU_AWS_ACCOUNT_ID=<your AWS account id>")
-    click.echo("  2. haru login")
-    click.echo("  3. haru chat")
+    click.echo("  1. haru login   (browser sign-in; your account and role are discovered)")
+    click.echo("  2. haru chat")
 
 
 @config.command()

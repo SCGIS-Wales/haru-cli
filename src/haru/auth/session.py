@@ -14,9 +14,10 @@ from botocore.exceptions import (
 )
 
 from haru.auth.cache import read_token_cache, write_token_cache
+from haru.auth.identity import read_identity
 from haru.auth.sso import SsoToken
-from haru.config.schema import AuthConfig
-from haru.errors import AuthExpiredError, ConfigError
+from haru.config.schema import AuthConfig, SsoConfig
+from haru.errors import AuthExpiredError
 
 _REFRESH_WINDOW = timedelta(minutes=15)
 _RELOGIN_HINT = "run 'haru login'"
@@ -42,16 +43,12 @@ def build_boto3_session(
     if token.expires_at <= datetime.now(UTC) + _REFRESH_WINDOW:
         token = _refresh_token(config, token, oidc=oidc, cache_dir=cache_dir)
 
-    account_id = os.environ.get(sso.account_id_env)
-    if account_id is None:
-        raise ConfigError(
-            f"Environment variable {sso.account_id_env!r} must hold the target AWS account id"
-        )
+    account_id, role_name = _resolve_identity(sso, cache_dir)
     if sso_client is None:
         sso_client = boto3.Session().client("sso", region_name=sso.sso_region)
     try:
         response = sso_client.get_role_credentials(
-            roleName=sso.role_name, accountId=account_id, accessToken=token.access_token
+            roleName=role_name, accountId=account_id, accessToken=token.access_token
         )
     except (ClientError, SSOTokenLoadError, UnauthorizedSSOTokenError, TokenRetrievalError) as exc:
         raise AuthExpiredError(f"SSO credentials rejected; {_RELOGIN_HINT}") from exc
@@ -63,6 +60,25 @@ def build_boto3_session(
         aws_session_token=credentials["sessionToken"],
         region_name=config.bedrock_region,
     )
+
+
+def _resolve_identity(sso: SsoConfig, cache_dir: Path | None) -> tuple[str, str]:
+    """Resolve the account id and role: config pins, env var, then the login choice."""
+    stored = read_identity(sso.start_url, cache_dir)
+
+    account_id = sso.account_id
+    if account_id is None and sso.account_id_env is not None:
+        account_id = os.environ.get(sso.account_id_env)
+    if account_id is None and stored is not None:
+        account_id = stored.account_id
+
+    role_name = sso.role_name
+    if role_name is None and stored is not None:
+        role_name = stored.role_name
+
+    if account_id is None or role_name is None:
+        raise AuthExpiredError(f"No AWS account/role selected yet; {_RELOGIN_HINT}")
+    return account_id, role_name
 
 
 def _refresh_token(

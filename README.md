@@ -56,11 +56,16 @@ Inside `haru chat`, slash commands switch targets mid-session:
 
 ```bash
 haru config init      # writes ~/.config/haru (asks for your SSO start URL)
-export HARU_AWS_ACCOUNT_ID=<your AWS account id>
-haru login
+haru login            # browser sign-in; account and role discovered for you
 haru run "Summarise the Converse API in two sentences."
 haru chat --agent supervisor --session-id demo
 ```
+
+`haru login` is browser-only: after Identity Center sign-in, your accessible
+AWS accounts and permission-set roles are discovered automatically (like
+`aws configure sso`), auto-selected when there is exactly one, prompted
+otherwise, and remembered for later sessions. Pin `auth.sso.account_id` /
+`role_name` in configuration only if you want to skip the discovery.
 
 Authentication uses the same PKCE authorization-code flow as `aws sso login`,
 caching tokens in the botocore-compatible schema under `~/.aws/sso/cache`
