@@ -7,10 +7,18 @@ the US; any explicitly configured prefix (including ``global.``) is respected
 as written, since configuration is the approval surface.
 """
 
+from typing import Any
+
 import boto3
 from strands.models import BedrockModel
 
-from haru.config.schema import GuardrailsConfig, HaruConfig, ModelConfig, ModelsConfig
+from haru.config.schema import (
+    GuardrailsConfig,
+    HaruConfig,
+    ModelConfig,
+    ModelsConfig,
+    SamplingConfig,
+)
 from haru.errors import ConfigError
 from haru.observability.guardrails import apply_guardrail
 
@@ -33,23 +41,84 @@ def build_model(
     model_cfg: ModelConfig,
     session: boto3.Session,
     guardrails: GuardrailsConfig | None = None,
+    sampling: SamplingConfig | None = None,
 ) -> BedrockModel:
     """Build a Strands BedrockModel from ``model_cfg`` and a boto3 session.
 
-    When ``guardrails`` is enabled, the Bedrock Guardrails parameters are
-    attached to the model.
+    ``sampling`` overrides the model entry's own sampling fields per-field.
+    Unset sampling fields are omitted from the request entirely; ``top_k``
+    and ``seed`` travel via Converse ``additionalModelRequestFields``. When
+    ``guardrails`` is enabled, the Bedrock Guardrails parameters are attached.
     """
     return BedrockModel(
         boto_session=session,
         region_name=model_cfg.region,
         model_id=resolve_model_id(model_cfg.model_id),
         max_tokens=model_cfg.max_tokens,
-        temperature=model_cfg.temperature,
         streaming=model_cfg.streaming,
         # Rich tool schemas can fail ConverseStream's strict validation.
         strict_tools=False,
+        **_sampling_kwargs(effective_sampling(model_cfg, sampling)),
         **apply_guardrail(model_cfg, guardrails),
     )
+
+
+def effective_sampling(model_cfg: ModelConfig, override: SamplingConfig | None) -> SamplingConfig:
+    """Merge ``override`` over the model entry's sampling fields."""
+    base = SamplingConfig(
+        temperature=model_cfg.temperature,
+        top_p=model_cfg.top_p,
+        top_k=model_cfg.top_k,
+        seed=model_cfg.seed,
+    )
+    merged = merge_sampling(base, override)
+    return merged if merged is not None else base
+
+
+def merge_sampling(
+    base: SamplingConfig | None, override: SamplingConfig | None
+) -> SamplingConfig | None:
+    """Merge two sampling configs per-field; ``override`` wins where set."""
+    if base is None:
+        return override
+    if override is None:
+        return base
+    return SamplingConfig(
+        temperature=override.temperature if override.temperature is not None else base.temperature,
+        top_p=override.top_p if override.top_p is not None else base.top_p,
+        top_k=override.top_k if override.top_k is not None else base.top_k,
+        seed=override.seed if override.seed is not None else base.seed,
+    )
+
+
+def sampling_overrides(
+    *,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    top_k: int | None = None,
+    seed: int | None = None,
+) -> SamplingConfig | None:
+    """Build a SamplingConfig from CLI options; None when nothing is set."""
+    if temperature is None and top_p is None and top_k is None and seed is None:
+        return None
+    return SamplingConfig(temperature=temperature, top_p=top_p, top_k=top_k, seed=seed)
+
+
+def _sampling_kwargs(sampling: SamplingConfig) -> dict[str, Any]:
+    """Map effective sampling onto BedrockModel kwargs (set fields only)."""
+    kwargs: dict[str, Any] = {}
+    if sampling.temperature is not None:
+        kwargs["temperature"] = sampling.temperature
+    if sampling.top_p is not None:
+        kwargs["top_p"] = sampling.top_p
+    request_fields: dict[str, Any] = {}
+    if sampling.top_k is not None:
+        request_fields["top_k"] = sampling.top_k
+    if sampling.seed is not None:
+        request_fields["seed"] = sampling.seed
+    if request_fields:
+        kwargs["additional_request_fields"] = request_fields
+    return kwargs
 
 
 def get_model_config(config: HaruConfig, name: str | None = None) -> ModelConfig:

@@ -38,6 +38,18 @@ Bare Bedrock model ids receive the `us.` geographic inference-profile prefix
 by default. Explicit prefixes (`eu.`, `au.`, `global.`, ...) and full ARNs
 pass through as configured — writing one into YAML is the approval surface.
 
+## Sampling
+
+`temperature`, `top_p`, `top_k`, and `seed` are optional on every model entry
+and may also be set per agent (a `sampling:` block) or per invocation
+(`--temperature/--top-p/--top-k/--seed`, or `/sampling` inside `haru chat`).
+Precedence is CLI/REPL → agent → model, merged per-field; unset fields are
+omitted from requests. `temperature`/`top_p` map to the Converse inference
+configuration; `top_k` and `seed` travel via
+`additionalModelRequestFields`. Claude 5-series and Opus 4.7+ models reject
+non-default sampling values (HTTP 400), and no Claude model honours `seed` —
+use these fields with models that accept them (for example Haiku 4.5).
+
 ## Sessions
 
 Conversation persistence is configured in the base file:

@@ -6,7 +6,20 @@ from pathlib import Path
 import click
 
 from haru.config import load_config, resolve_config_path, user_config_path
+from haru.config.schema import ModelConfig
 from haru.errors import HaruError
+
+
+def _sampling_summary(entry: ModelConfig) -> str:
+    """Compact ``[temp=.. top_k=..]`` summary of a model's set sampling fields."""
+    labels = {"temperature": "temp", "top_p": "top_p", "top_k": "top_k", "seed": "seed"}
+    parts = [
+        f"{label}={value}"
+        for field, label in labels.items()
+        if (value := getattr(entry, field)) is not None
+    ]
+    return f" [{' '.join(parts)}]" if parts else ""
+
 
 _TEMPLATE_FILES = ("haru.yaml", "models.yaml", "agents.yaml", "mcp.yaml", "logging.yaml")
 _PROMPT_FILES = ("supervisor.md", "researcher.md", "writer.md")
@@ -128,8 +141,8 @@ def show(config_path: Path | None) -> None:
     if loaded.models is not None:
         default = loaded.models.default_model
         names = ", ".join(
-            f"{name}{' (default)' if name == default else ''}"
-            for name in sorted(loaded.models.models)
+            f"{name}{' (default)' if name == default else ''}{_sampling_summary(entry)}"
+            for name, entry in sorted(loaded.models.models.items())
         )
         click.echo(f"Models:       {names}")
     if loaded.agents is not None:

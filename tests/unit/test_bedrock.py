@@ -3,10 +3,18 @@
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
-from haru.config.schema import HaruConfig, ModelConfig
+from haru.config.schema import HaruConfig, ModelConfig, SamplingConfig
 from haru.errors import ConfigError
-from haru.models.bedrock import build_model, get_model_config, list_models, resolve_model_id
+from haru.models.bedrock import (
+    build_model,
+    get_model_config,
+    list_models,
+    merge_sampling,
+    resolve_model_id,
+    sampling_overrides,
+)
 
 BASE = {
     "app": {"name": "haru"},
@@ -73,10 +81,73 @@ def test_build_model_kwargs(mocker: Any) -> None:
         region_name="us-east-1",
         model_id="us.anthropic.claude-sonnet-5",
         max_tokens=4096,
-        temperature=0.3,
         streaming=True,
         strict_tools=False,
+        temperature=0.3,
     )
+
+
+def test_build_model_omits_unset_sampling(mocker: Any) -> None:
+    """No sampling fields set means none are sent (Claude 5-series safe)."""
+    bedrock_model = mocker.patch("haru.models.bedrock.BedrockModel")
+
+    build_model(make_model_config(temperature=None), mocker.Mock())
+
+    kwargs = bedrock_model.call_args.kwargs
+    for key in ("temperature", "top_p", "additional_request_fields"):
+        assert key not in kwargs
+
+
+def test_build_model_top_k_and_seed_via_request_fields(mocker: Any) -> None:
+    """top_k and seed travel via Converse additionalModelRequestFields."""
+    bedrock_model = mocker.patch("haru.models.bedrock.BedrockModel")
+
+    build_model(make_model_config(temperature=0.2, top_p=0.9, top_k=50, seed=42), mocker.Mock())
+
+    kwargs = bedrock_model.call_args.kwargs
+    assert kwargs["temperature"] == 0.2
+    assert kwargs["top_p"] == 0.9
+    assert kwargs["additional_request_fields"] == {"top_k": 50, "seed": 42}
+
+
+def test_sampling_override_beats_model_entry(mocker: Any) -> None:
+    """A per-field override wins; unset override fields keep model values."""
+    bedrock_model = mocker.patch("haru.models.bedrock.BedrockModel")
+    override = SamplingConfig(temperature=0.0, top_k=1)
+
+    build_model(make_model_config(temperature=0.7, top_p=0.9), mocker.Mock(), sampling=override)
+
+    kwargs = bedrock_model.call_args.kwargs
+    assert kwargs["temperature"] == 0.0
+    assert kwargs["top_p"] == 0.9
+    assert kwargs["additional_request_fields"] == {"top_k": 1}
+
+
+def test_merge_sampling_per_field() -> None:
+    """merge_sampling composes per-field with override precedence."""
+    base = SamplingConfig(temperature=0.5, top_k=10)
+    override = SamplingConfig(top_k=99, seed=7)
+
+    merged = merge_sampling(base, override)
+
+    assert merged == SamplingConfig(temperature=0.5, top_k=99, seed=7)
+    assert merge_sampling(None, override) == override
+    assert merge_sampling(base, None) == base
+    assert merge_sampling(None, None) is None
+
+
+def test_sampling_overrides_builder() -> None:
+    """sampling_overrides returns None when nothing is set."""
+    assert sampling_overrides() is None
+    assert sampling_overrides(top_k=5) == SamplingConfig(top_k=5)
+
+
+def test_sampling_config_bounds() -> None:
+    """Sampling fields validate their ranges."""
+    with pytest.raises(ValidationError):
+        SamplingConfig(temperature=1.5)
+    with pytest.raises(ValidationError):
+        SamplingConfig(top_k=0)
 
 
 def test_build_model_streaming_defaults_on(mocker: Any) -> None:

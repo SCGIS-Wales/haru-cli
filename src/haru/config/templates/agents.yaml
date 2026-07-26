@@ -28,3 +28,10 @@ orchestration:
     edges:
       - from: research
         to: write
+# Per-agent sampling overrides beat the model entry's values and are in turn
+# beaten by CLI/REPL overrides. Example:
+#   researcher:
+#     model: haiku-4-5
+#     sampling:
+#       temperature: 0.1
+#       top_k: 20

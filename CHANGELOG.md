@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Sampling controls (`temperature`, `top_p`, `top_k`, `seed`) across three
+  surfaces: model entries, per-agent `sampling:` blocks, and CLI/REPL
+  overrides (`--temperature/--top-p/--top-k/--seed`, `/sampling`).
+  Precedence CLI/REPL → agent → model, merged per-field; unset fields are
+  omitted from requests. `top_k`/`seed` travel via Converse
+  `additionalModelRequestFields`.
+
+### Fixed
+
+- `temperature` is no longer required (or sent by default) on model entries —
+  Claude 5-series and Opus 4.7+ reject non-default sampling values with an
+  HTTP 400, which the previous always-sent temperature would have triggered.
+
+### Added
+
 - `haru config init`: interactive starter configuration under
   `~/.config/haru` (SSO settings prompted; guardrails explicitly disabled
   when no id is provided). `haru config show` prints a secret-free summary.

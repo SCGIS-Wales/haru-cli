@@ -53,13 +53,31 @@ class IncludesConfig(_FrozenModel):
     logging: str | None = None
 
 
+class SamplingConfig(_FrozenModel):
+    """Optional sampling parameters.
+
+    Unset fields are omitted from requests entirely, keeping the provider's
+    defaults — required by Claude 5-series models, which reject non-default
+    sampling values. ``seed`` is passed through for Bedrock models that
+    support it (no Claude model does today).
+    """
+
+    temperature: float | None = Field(default=None, ge=0.0, le=1.0)
+    top_p: float | None = Field(default=None, ge=0.0, le=1.0)
+    top_k: int | None = Field(default=None, ge=1)
+    seed: int | None = None
+
+
 class ModelConfig(_FrozenModel):
     """A single Bedrock model entry."""
 
     model_id: str
     region: str
     max_tokens: int = Field(ge=1)
-    temperature: float = Field(ge=0.0, le=1.0)
+    temperature: float | None = Field(default=None, ge=0.0, le=1.0)
+    top_p: float | None = Field(default=None, ge=0.0, le=1.0)
+    top_k: int | None = Field(default=None, ge=1)
+    seed: int | None = None
     streaming: bool = True
 
 
@@ -83,6 +101,7 @@ class AgentConfig(_FrozenModel):
     system_prompt_ref: str | None = None
     tools: tuple[str, ...] = ()
     mcp_servers: tuple[str, ...] = ()
+    sampling: SamplingConfig | None = None
 
 
 class SwarmConfig(_FrozenModel):

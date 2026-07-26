@@ -13,7 +13,7 @@ from rich.console import Console
 from haru.auth.sso import ClientRegistration, SsoToken
 from haru.cli import cli
 from haru.commands.chat import run_chat
-from haru.config.schema import HaruConfig
+from haru.config.schema import HaruConfig, SamplingConfig
 from haru.errors import AuthExpiredError, ConfigError
 
 
@@ -298,6 +298,73 @@ def test_chat_slash_switch_failure_keeps_agent(
     assert result.exit_code == 0, result.output
     assert "Unknown agent 'ghost'" in result.output
     assert "Hello world" in result.output
+
+
+def test_run_sampling_flags(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """--temperature/--top-k on haru run reach the agent build as overrides."""
+    mocker.patch("haru.commands.run.build_boto3_session")
+    build_agent = mocker.patch(
+        "haru.commands.run.build_agent", return_value=FakeAgent(hello_events())
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "run",
+            "say hi",
+            "--config",
+            str(make_config(tmp_path)),
+            "--temperature",
+            "0.2",
+            "--top-k",
+            "9",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert build_agent.call_args.kwargs["sampling"] == SamplingConfig(temperature=0.2, top_k=9)
+
+
+def test_run_without_sampling_flags_passes_none(
+    runner: CliRunner, tmp_path: Path, mocker: Any
+) -> None:
+    """No sampling flags means no override object at all."""
+    mocker.patch("haru.commands.run.build_boto3_session")
+    build_agent = mocker.patch(
+        "haru.commands.run.build_agent", return_value=FakeAgent(hello_events())
+    )
+
+    result = runner.invoke(cli, ["run", "say hi", "--config", str(make_config(tmp_path))])
+
+    assert result.exit_code == 0
+    assert build_agent.call_args.kwargs["sampling"] is None
+
+
+def test_chat_sampling_command(runner: CliRunner, tmp_path: Path, mocker: Any) -> None:
+    """/sampling shows, sets, rejects bad input, and resets overrides."""
+    mocker.patch("haru.commands.chat.build_boto3_session")
+    build_agent = mocker.patch(
+        "haru.commands.chat.build_agent",
+        side_effect=lambda *a, **k: FakeAgent(hello_events()),
+    )
+
+    result = runner.invoke(
+        cli,
+        ["chat", "--config", str(make_chat_config(tmp_path))],
+        input=(
+            "/sampling\n/sampling temperature=0.2 top_k=9\n/sampling bogus\n/sampling reset\nexit\n"
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "effective" in result.output
+    assert "Sampling overrides applied (conversation reset)." in result.output
+    assert "Bad sampling token 'bogus'" in result.output
+    assert "Sampling overrides cleared (conversation reset)." in result.output
+    sampling_calls = [call.kwargs["sampling"] for call in build_agent.call_args_list]
+    assert sampling_calls[0] is None
+    assert sampling_calls[1] == SamplingConfig(temperature=0.2, top_k=9)
+    assert sampling_calls[2] is None
 
 
 def test_chat_session_id_builds_session_manager(

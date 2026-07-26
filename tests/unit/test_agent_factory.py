@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from haru.agents.factory import build_agent
-from haru.config.schema import HaruConfig
+from haru.config.schema import HaruConfig, SamplingConfig
 from haru.errors import ConfigError
 
 CONFIG_PAYLOAD: dict[str, Any] = {
@@ -79,6 +79,24 @@ def test_default_agent_model_override(mocker: Any) -> None:
     build_agent(make_config(), None, mocker.Mock(), model_name="deep")
 
     assert build_model.call_args.args[0].model_id == "anthropic.b"
+
+
+def test_agent_sampling_merges_with_override(mocker: Any) -> None:
+    """CLI override beats the agent's sampling block, per-field."""
+    mocker.patch("haru.agents.factory.Agent")
+    build_model = mocker.patch("haru.agents.factory.build_model", return_value="model-obj")
+    payload: dict[str, Any] = {
+        **CONFIG_PAYLOAD,
+        "agents": {
+            "agents": {"writer": {"model": "deep", "sampling": {"temperature": 0.7, "top_k": 10}}}
+        },
+    }
+    config = HaruConfig.model_validate(payload)
+
+    build_agent(config, "writer", mocker.Mock(), sampling=SamplingConfig(top_k=99))
+
+    merged = build_model.call_args.kwargs["sampling"]
+    assert merged == SamplingConfig(temperature=0.7, top_k=99)
 
 
 def test_named_agent_rejects_model_override(mocker: Any) -> None:
