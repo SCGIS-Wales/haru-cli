@@ -11,6 +11,7 @@ from haru.commands.streaming import collect_response, surface_guardrail
 from haru.config import load_config
 from haru.config.schema import HaruConfig
 from haru.errors import HaruError
+from haru.tools.mcp import started_mcp_clients
 
 
 def run_prompt(
@@ -26,9 +27,12 @@ def run_prompt(
     Guardrail interventions are surfaced on ``console`` (stderr by default).
     """
     session = build_boto3_session(config.auth)
-    agent = build_agent(config, agent_name, session, prompts_root=prompts_root)
-    chunks: list[str] = []
-    result = collect_response(agent, prompt, chunks.append)
+    with started_mcp_clients(config.mcp) as mcp_clients:
+        agent = build_agent(
+            config, agent_name, session, prompts_root=prompts_root, mcp_clients=mcp_clients
+        )
+        chunks: list[str] = []
+        result = collect_response(agent, prompt, chunks.append)
     surface_guardrail(result, console if console is not None else Console(stderr=True))
     return "".join(chunks)
 

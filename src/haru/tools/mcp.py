@@ -6,8 +6,9 @@ Connections are made lazily by Strands; construction failures honour each
 server's ``continue_on_error`` flag so one bad server cannot abort startup.
 """
 
+import contextlib
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any
 
 from mcp import StdioServerParameters, stdio_client
@@ -40,6 +41,32 @@ def build_mcp_clients(mcp_cfg: MCPConfig) -> dict[str, MCPClient]:
                 continue
             raise ToolError(f"MCP server {name!r} failed to construct: {exc}") from exc
     return clients
+
+
+@contextlib.contextmanager
+def started_mcp_clients(mcp_cfg: MCPConfig | None) -> Iterator[dict[str, MCPClient]]:
+    """Build and start every enabled MCP client for the duration of the context.
+
+    Startup failures honour each server's ``continue_on_error`` flag; all
+    started clients are stopped on exit.
+    """
+    clients = build_mcp_clients(mcp_cfg) if mcp_cfg is not None else {}
+    started: dict[str, MCPClient] = {}
+    try:
+        for name, client in clients.items():
+            try:
+                client.start()
+            except Exception as exc:
+                if _continue_on_error(mcp_cfg, name):
+                    logger.warning("MCP server %r failed to start; continuing: %s", name, exc)
+                    continue
+                raise ToolError(f"MCP server {name!r} failed to start: {exc}") from exc
+            started[name] = client
+        yield started
+    finally:
+        for client in started.values():
+            with contextlib.suppress(Exception):
+                client.stop(None, None, None)
 
 
 def collect_tools(

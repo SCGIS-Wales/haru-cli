@@ -12,6 +12,7 @@ from haru.commands.streaming import collect_response, surface_guardrail
 from haru.config import load_config
 from haru.config.schema import HaruConfig
 from haru.errors import HaruError
+from haru.tools.mcp import started_mcp_clients
 
 _EXIT_WORDS = frozenset({"exit", "quit"})
 
@@ -26,28 +27,33 @@ def run_chat(
 ) -> None:
     """Run the interactive chat loop until the user exits."""
     session = build_boto3_session(config.auth)
-    agent = build_agent(config, agent_name, session, prompts_root=prompts_root)
-    console.print("haru chat - type 'exit' or press Ctrl-D to leave.")
-    while True:
-        try:
-            line = read_input("you> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            console.print("\nGoodbye.")
-            return
-        if not line:
-            continue
-        if line.lower() in _EXIT_WORDS:
-            console.print("Goodbye.")
-            return
-        try:
-            result = collect_response(
-                agent, line, lambda text: console.print(text, end="", markup=False, highlight=False)
-            )
-        except KeyboardInterrupt:
-            console.print("\n[interrupted]")
-            continue
-        console.print()
-        surface_guardrail(result, console)
+    with started_mcp_clients(config.mcp) as mcp_clients:
+        agent = build_agent(
+            config, agent_name, session, prompts_root=prompts_root, mcp_clients=mcp_clients
+        )
+        console.print("haru chat - type 'exit' or press Ctrl-D to leave.")
+        while True:
+            try:
+                line = read_input("you> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                console.print("\nGoodbye.")
+                return
+            if not line:
+                continue
+            if line.lower() in _EXIT_WORDS:
+                console.print("Goodbye.")
+                return
+            try:
+                result = collect_response(
+                    agent,
+                    line,
+                    lambda text: console.print(text, end="", markup=False, highlight=False),
+                )
+            except KeyboardInterrupt:
+                console.print("\n[interrupted]")
+                continue
+            console.print()
+            surface_guardrail(result, console)
 
 
 @click.command()

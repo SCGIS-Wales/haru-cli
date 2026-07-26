@@ -6,7 +6,7 @@ import pytest
 
 from haru.config.schema import AgentConfig, MCPConfig
 from haru.errors import ConfigError, ToolError
-from haru.tools.mcp import build_mcp_clients, collect_tools
+from haru.tools.mcp import build_mcp_clients, collect_tools, started_mcp_clients
 from haru.tools.registry import available_builtin_tools, resolve_builtin_tools
 
 
@@ -166,3 +166,47 @@ def test_collect_tools_registry_missing_name() -> None:
     agent_cfg = make_agent_config(tools=["calculator"])
     with pytest.raises(ToolError, match="calculator"):
         collect_tools(agent_cfg, {}, {})
+
+
+def test_started_mcp_clients_lifecycle(mocker: Any) -> None:
+    """Clients are started on entry and stopped on exit."""
+    client = mocker.Mock()
+    mocker.patch("haru.tools.mcp.build_mcp_clients", return_value={"docs": client})
+
+    with started_mcp_clients(make_mcp_config(docs=STDIO_SERVER)) as clients:
+        assert clients == {"docs": client}
+        client.start.assert_called_once_with()
+        client.stop.assert_not_called()
+
+    client.stop.assert_called_once_with(None, None, None)
+
+
+def test_started_mcp_clients_none_config() -> None:
+    """A missing MCP section yields no clients."""
+    with started_mcp_clients(None) as clients:
+        assert clients == {}
+
+
+def test_started_mcp_clients_start_failure_tolerated(mocker: Any) -> None:
+    """A start failure is tolerated for servers with continue_on_error."""
+    client = mocker.Mock()
+    client.start.side_effect = RuntimeError("no route")
+    mocker.patch("haru.tools.mcp.build_mcp_clients", return_value={"flaky": client})
+    mcp_cfg = make_mcp_config(flaky={**STDIO_SERVER, "continue_on_error": True})
+
+    with started_mcp_clients(mcp_cfg) as clients:
+        assert clients == {}
+
+
+def test_started_mcp_clients_start_failure_fatal(mocker: Any) -> None:
+    """A start failure without the flag raises ToolError and stops started peers."""
+    good = mocker.Mock()
+    bad = mocker.Mock()
+    bad.start.side_effect = RuntimeError("no route")
+    mocker.patch("haru.tools.mcp.build_mcp_clients", return_value={"good": good, "strict": bad})
+    mcp_cfg = make_mcp_config(good=STDIO_SERVER, strict=STDIO_SERVER)
+
+    with pytest.raises(ToolError, match="strict"), started_mcp_clients(mcp_cfg):
+        pass
+
+    good.stop.assert_called_once_with(None, None, None)
