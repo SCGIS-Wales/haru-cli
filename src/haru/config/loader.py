@@ -151,9 +151,13 @@ def _validate[ModelT: BaseModel](model: type[ModelT], data: dict[str, Any], sour
 
 
 def _check_cross_references(config: HaruConfig) -> None:
-    """Validate references that span include files (agents -> models)."""
-    if config.agents is None or config.models is None:
+    """Validate references that span include files (agents -> models/MCP)."""
+    if config.agents is None:
         return
     for name, agent in config.agents.agents.items():
-        if agent.model not in config.models.models:
+        if config.models is not None and agent.model not in config.models.models:
             raise ConfigError(f"Agent {name!r} references unknown model {agent.model!r}")
+        if config.mcp is not None:
+            for server in agent.mcp_servers:
+                if server not in config.mcp.mcp_servers:
+                    raise ConfigError(f"Agent {name!r} references unknown MCP server {server!r}")

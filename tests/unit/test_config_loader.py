@@ -321,6 +321,19 @@ def test_agent_model_cross_reference(tmp_path: Path) -> None:
         load_config(tmp_path / "haru.yaml")
 
 
+def test_agent_mcp_server_cross_reference(tmp_path: Path) -> None:
+    """An agent referencing an unconfigured MCP server fails at load."""
+    base = BASE_YAML + "includes:\n  agents: agents.yaml\n  mcp: mcp.yaml\n"
+    (tmp_path / "haru.yaml").write_text(base, encoding="utf-8")
+    (tmp_path / "agents.yaml").write_text(
+        "agents:\n  lonely:\n    model: sonnet-5\n    mcp_servers: [phantom-server]\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "mcp.yaml").write_text("mcp_servers: {}\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="phantom-server"):
+        load_config(tmp_path / "haru.yaml")
+
+
 def test_swarm_member_must_be_agent(tmp_path: Path) -> None:
     """Swarm members must be configured agents."""
     path = tmp_path / "haru.yaml"
