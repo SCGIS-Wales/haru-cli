@@ -11,9 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Installable package scaffold (`haru` console script, `python -m haru`).
-- `haru --version` via Click with version resolved from package metadata.
-- Toolchain: uv packaging, ruff lint/format, mypy strict, pytest with a 90% coverage gate.
-- Pre-commit hooks, Renovate configuration, GitHub Actions CI (Python 3.13/3.14) and
-  PyPI release workflow (Trusted Publishing).
-- Steering documents under `.kiro/steering/`.
+- `haru login`: IAM Identity Center sign-in via the OAuth 2.0 authorization-code
+  flow with PKCE (S256), loopback-only redirect capture, and a
+  botocore-compatible token cache (`~/.aws/sso/cache`, 0600) with automatic
+  refresh via the `refresh_token` grant.
+- `haru chat`: interactive streaming REPL with clean Ctrl-C/Ctrl-D handling,
+  `--agent` selection, and `--session-id` persistence; `haru run` for one-shot
+  prompts; `haru session list` for stored conversations.
+- Typed YAML configuration with includes, `${env:VAR}` interpolation,
+  inline-secret rejection, and load-time cross-reference validation.
+- Strands BedrockModel factory with `us.` data-residency defaults, streaming
+  on, and Bedrock Guardrails attached (input redaction on; enabled guardrails
+  without an id fail closed).
+- Built-in tool allowlist (strands_tools) and MCP clients for stdio and
+  streamable-http transports with disabled/continue-on-error handling.
+- Versioned steering prompts under `config/prompts/` with base+overlay
+  composition.
+- Multi-agent orchestration: supervisor (agents-as-tools), swarm, and graph
+  patterns built from configuration.
+- Session persistence: project-local file backend (default) and S3 backend.
+- OpenTelemetry OTLP tracing via the Strands telemetry helper (no-op when
+  disabled).
+- Toolchain: uv packaging, ruff lint/format, mypy strict, pytest with a 90%
+  coverage gate, pre-commit hooks, Renovate, GitHub Actions CI (Python
+  3.13/3.14), and a PyPI release workflow using Trusted Publishing.
