@@ -1,6 +1,6 @@
 [project]
 name = "haru-cli"
-version = "0.1.5"
+version = "0.1.6"
 description = "Secure, scriptable CLI for Amazon Bedrock Claude models via the AWS Strands Agents SDK."
 readme = "README.md"
 license = "Apache-2.0"
