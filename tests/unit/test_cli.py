@@ -196,6 +196,60 @@ def test_chat_skips_blank_lines(runner: CliRunner, tmp_path: Path, mocker: Any) 
     assert agent.prompts == []
 
 
+def test_chat_session_id_builds_session_manager(
+    runner: CliRunner, tmp_path: Path, mocker: Any
+) -> None:
+    """--session-id wires a session manager into the agent build."""
+    mocker.patch("haru.commands.chat.build_boto3_session")
+    build_manager = mocker.patch(
+        "haru.commands.chat.build_session_manager", return_value="manager-obj"
+    )
+    build_agent = mocker.patch(
+        "haru.commands.chat.build_agent", return_value=FakeAgent(hello_events())
+    )
+
+    result = runner.invoke(
+        cli,
+        ["chat", "--config", str(make_config(tmp_path)), "--session-id", "chat-9"],
+        input="exit\n",
+    )
+
+    assert result.exit_code == 0
+    assert build_manager.call_args.args[1] == "chat-9"
+    assert build_agent.call_args.kwargs["session_manager"] == "manager-obj"
+
+
+def test_session_list_command(runner: CliRunner, tmp_path: Path) -> None:
+    """``haru session list`` prints stored ids from the configured directory."""
+    sessions_dir = tmp_path / "state"
+    (sessions_dir / "session_alpha").mkdir(parents=True)
+    (sessions_dir / "session_beta").mkdir()
+    config_path = tmp_path / "haru.yaml"
+    config_path.write_text(
+        BASE_CONFIG + f'sessions:\n  backend: file\n  storage_dir: "{sessions_dir}"\n',
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(cli, ["session", "list", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert result.output.splitlines() == ["alpha", "beta"]
+
+
+def test_session_list_empty(runner: CliRunner, tmp_path: Path) -> None:
+    """No stored sessions is reported plainly."""
+    config_path = tmp_path / "haru.yaml"
+    config_path.write_text(
+        BASE_CONFIG + f'sessions:\n  backend: file\n  storage_dir: "{tmp_path / "none"}"\n',
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(cli, ["session", "list", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert "No stored sessions" in result.output
+
+
 def test_login_opener_echoes_url_and_opens_browser(
     runner: CliRunner, tmp_path: Path, mocker: Any
 ) -> None:

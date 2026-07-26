@@ -12,6 +12,7 @@ from typing import Any
 import boto3
 from strands import Agent
 from strands.models import BedrockModel
+from strands.session.session_manager import SessionManager
 from strands.tools.mcp import MCPClient
 
 from haru.config.schema import HaruConfig
@@ -21,24 +22,33 @@ from haru.steering.prompts import DEFAULT_PROMPTS_ROOT, load_prompts, resolve_pr
 from haru.tools.mcp import collect_tools
 
 
-def build_agent(
+def build_agent(  # noqa: PLR0913 - keyword-only wiring points, all optional
     config: HaruConfig,
     agent_name: str | None,
     session: boto3.Session,
     *,
     prompts_root: Path | None = None,
     mcp_clients: Mapping[str, MCPClient] | None = None,
+    session_manager: SessionManager | None = None,
 ) -> Agent:
     """Build the named agent from configuration (default model when unnamed).
 
     Raises ConfigError for unknown agents, prompt references, or tools.
     """
     if agent_name is None:
-        return Agent(model=build_model(get_model_config(config), session))
+        return Agent(
+            model=build_model(get_model_config(config), session), session_manager=session_manager
+        )
     model, system_prompt, tools = resolve_agent_parts(
         config, agent_name, session, prompts_root=prompts_root, mcp_clients=mcp_clients
     )
-    return Agent(model=model, system_prompt=system_prompt, tools=tools, name=agent_name)
+    return Agent(
+        model=model,
+        system_prompt=system_prompt,
+        tools=tools,
+        name=agent_name,
+        session_manager=session_manager,
+    )
 
 
 def resolve_agent_parts(

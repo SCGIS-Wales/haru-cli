@@ -178,6 +178,26 @@ class MCPConfig(_FrozenModel):
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class SessionsConfig(_FrozenModel):
+    """Conversation persistence settings.
+
+    The file backend always uses an explicit project-local directory; the OS
+    temp directory is never used.
+    """
+
+    backend: Literal["file", "s3"] = "file"
+    storage_dir: str = "./.haru/sessions"
+    bucket: str | None = None
+    prefix: str = "haru/sessions"
+    region: str | None = None
+
+    @model_validator(mode="after")
+    def _s3_requires_bucket(self) -> Self:
+        if self.backend == "s3" and self.bucket is None:
+            raise ValueError("s3 session backend requires a 'bucket'")
+        return self
+
+
 class GuardrailsConfig(_FrozenModel):
     """Bedrock Guardrails settings."""
 
@@ -231,6 +251,7 @@ class HaruConfig(_FrozenModel):
 
     app: AppConfig
     auth: AuthConfig
+    sessions: SessionsConfig | None = None
     includes: IncludesConfig | None = None
     models: ModelsConfig | None = None
     agents: AgentsConfig | None = None
