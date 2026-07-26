@@ -55,7 +55,7 @@ def test_default_agent_uses_default_model(mocker: Any) -> None:
     build_agent(make_config(), None, session)
 
     assert build_model.call_args.args[0].model_id == "anthropic.a"
-    agent_cls.assert_called_once_with(model="model-obj")
+    agent_cls.assert_called_once_with(model="model-obj", session_manager=None)
 
 
 def test_named_agent_uses_its_model(mocker: Any) -> None:
@@ -67,7 +67,7 @@ def test_named_agent_uses_its_model(mocker: Any) -> None:
 
     assert build_model.call_args.args[0].model_id == "anthropic.b"
     agent_cls.assert_called_once_with(
-        model="model-obj", system_prompt=None, tools=[], name="writer"
+        model="model-obj", system_prompt=None, tools=[], name="writer", session_manager=None
     )
 
 
@@ -98,7 +98,11 @@ def test_agent_resolves_system_prompt_ref(mocker: Any, tmp_path: Path) -> None:
     )
 
     agent_cls.assert_called_once_with(
-        model="model-obj", system_prompt="Write well.", tools=[], name="writer"
+        model="model-obj",
+        system_prompt="Write well.",
+        tools=[],
+        name="writer",
+        session_manager=None,
     )
 
 
@@ -117,7 +121,11 @@ def test_agent_composed_prompt_ref(mocker: Any, tmp_path: Path) -> None:
     )
 
     agent_cls.assert_called_once_with(
-        model="model-obj", system_prompt="Base rules.\n\nWrite well.", tools=[], name="writer"
+        model="model-obj",
+        system_prompt="Base rules.\n\nWrite well.",
+        tools=[],
+        name="writer",
+        session_manager=None,
     )
 
 
