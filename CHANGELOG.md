@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The login callback now serves a proper local result page (dark themed,
+  approval/denial card): "Request approved" on success, "Request denied"
+  with the reason on error, missing parameters, or a state mismatch —
+  rendered server-side with no JavaScript.
+
+### Security
+
+- Login result pages ship strict browser security headers: CSP
+  (`default-src 'none'`, inline styles only, `frame-ancestors 'none'`),
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`, and `Cache-Control: no-store`; error
+  descriptions are HTML-escaped, and the `state` parameter is now also
+  validated in the callback handler before the browser is answered.
+
+### Added
+
 - Browser-only login: `haru login` now discovers your accessible AWS
   accounts and permission-set roles from Identity Center after sign-in
   (auto-selected when unambiguous, prompted otherwise) and remembers the
