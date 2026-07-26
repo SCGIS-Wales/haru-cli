@@ -36,9 +36,8 @@ def build_agent(  # noqa: PLR0913 - keyword-only wiring points, all optional
     Raises ConfigError for unknown agents, prompt references, or tools.
     """
     if agent_name is None:
-        return Agent(
-            model=build_model(get_model_config(config), session), session_manager=session_manager
-        )
+        model = build_model(get_model_config(config), session, guardrails=config.guardrails)
+        return Agent(model=model, session_manager=session_manager)
     model, system_prompt, tools = resolve_agent_parts(
         config, agent_name, session, prompts_root=prompts_root, mcp_clients=mcp_clients
     )
@@ -64,7 +63,9 @@ def resolve_agent_parts(
         available = ", ".join(sorted(config.agents.agents)) if config.agents else "none"
         raise ConfigError(f"Unknown agent {agent_name!r}; configured agents: {available}")
     agent_cfg = config.agents.agents[agent_name]
-    model = build_model(get_model_config(config, agent_cfg.model), session)
+    model = build_model(
+        get_model_config(config, agent_cfg.model), session, guardrails=config.guardrails
+    )
 
     system_prompt: str | None = None
     if agent_cfg.system_prompt_ref is not None:

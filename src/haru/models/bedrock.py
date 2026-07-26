@@ -10,8 +10,9 @@ as written, since configuration is the approval surface.
 import boto3
 from strands.models import BedrockModel
 
-from haru.config.schema import HaruConfig, ModelConfig, ModelsConfig
+from haru.config.schema import GuardrailsConfig, HaruConfig, ModelConfig, ModelsConfig
 from haru.errors import ConfigError
+from haru.observability.guardrails import apply_guardrail
 
 _GEO_PREFIXES = ("us.", "eu.", "ap.", "apac.", "au.", "jp.", "global.")
 _DEFAULT_GEO_PREFIX = "us."
@@ -28,8 +29,16 @@ def resolve_model_id(model_id: str) -> str:
     return f"{_DEFAULT_GEO_PREFIX}{model_id}"
 
 
-def build_model(model_cfg: ModelConfig, session: boto3.Session) -> BedrockModel:
-    """Build a Strands BedrockModel from ``model_cfg`` and a boto3 session."""
+def build_model(
+    model_cfg: ModelConfig,
+    session: boto3.Session,
+    guardrails: GuardrailsConfig | None = None,
+) -> BedrockModel:
+    """Build a Strands BedrockModel from ``model_cfg`` and a boto3 session.
+
+    When ``guardrails`` is enabled, the Bedrock Guardrails parameters are
+    attached to the model.
+    """
     return BedrockModel(
         boto_session=session,
         region_name=model_cfg.region,
@@ -39,6 +48,7 @@ def build_model(model_cfg: ModelConfig, session: boto3.Session) -> BedrockModel:
         streaming=model_cfg.streaming,
         # Rich tool schemas can fail ConverseStream's strict validation.
         strict_tools=False,
+        **apply_guardrail(model_cfg, guardrails),
     )
 
 

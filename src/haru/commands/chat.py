@@ -12,6 +12,7 @@ from haru.commands.streaming import collect_response, surface_guardrail
 from haru.config import load_config
 from haru.config.schema import HaruConfig
 from haru.errors import HaruError
+from haru.observability.telemetry import configure_telemetry
 from haru.sessions.manager import build_session_manager
 from haru.tools.mcp import started_mcp_clients
 
@@ -88,6 +89,7 @@ def chat(config_path: Path | None, agent_name: str | None, session_id: str | Non
     console = Console()
     try:
         config = load_config(config_path)
+        configure_telemetry(config.observability)
         prompts_root = config_path.parent / "prompts" if config_path is not None else None
         run_chat(
             config,
